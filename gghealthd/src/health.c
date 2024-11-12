@@ -6,7 +6,6 @@
 #include "bus_client.h"
 #include "sd_bus.h"
 #include "subscriptions.h"
-#include <sys/types.h>
 #include <assert.h>
 #include <ggl/buffer.h>
 #include <ggl/cleanup.h>
@@ -16,7 +15,6 @@
 #include <ggl/map.h>
 #include <ggl/object.h>
 #include <ggl/vector.h>
-#include <pthread.h>
 #include <systemd/sd-bus.h>
 #include <systemd/sd-daemon.h>
 #include <stdint.h>
@@ -162,10 +160,8 @@ GglError gghealthd_get_health(GglBuffer *status) {
     return GGL_ERR_OK;
 }
 
-static pthread_t event_thread;
-
 GglError gghealthd_init(void) {
-    pthread_create(&event_thread, NULL, health_event_loop_thread, NULL);
     sd_notify(0, "READY=1");
+    init_health_events();
     return GGL_ERR_OK;
 }

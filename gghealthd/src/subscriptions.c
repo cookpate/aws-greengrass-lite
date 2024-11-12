@@ -15,6 +15,7 @@
 #include <ggl/file.h>
 #include <ggl/log.h>
 #include <ggl/object.h>
+#include <ggl/socket_server.h>
 #include <ggl/utils.h>
 #include <inttypes.h>
 #include <pthread.h>
@@ -23,7 +24,6 @@
 #include <sys/eventfd.h>
 #include <systemd/sd-bus.h>
 #include <systemd/sd-event.h>
-#include <stdatomic.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -34,25 +34,12 @@
 
 // SoA subscription layout
 static sd_bus_slot *slots[GGHEALTHD_MAX_SUBSCRIPTIONS];
-static _Atomic(uint32_t) handles[GGHEALTHD_MAX_SUBSCRIPTIONS];
+static uint32_t handles[GGHEALTHD_MAX_SUBSCRIPTIONS];
 static size_t component_names_len[GGHEALTHD_MAX_SUBSCRIPTIONS];
 static uint8_t component_names[GGHEALTHD_MAX_SUBSCRIPTIONS]
                               [COMPONENT_NAME_MAX_LEN];
 
-// only to be used by sd_bus thread.
-static sd_bus *bus;
-
-// used to register and unregister subscriptions
-static pthread_mutex_t mtx = PTHREAD_MUTEX_INITIALIZER;
-static int event_fd;
-static pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
-static _Atomic(GglError) last_result = GGL_ERR_EXPECTED;
-static atomic_int operation_index = -1;
-
-// event_fd must be created before either ggl_listen or dbus threads start
-__attribute__((constructor)) static void create_event_fd(void) {
-    event_fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK | EFD_SEMAPHORE);
-}
+static sd_bus *global_bus;
 
 static GglBuffer component_name_buf(int index) {
     assert((index >= 0) && (index < GGHEALTHD_MAX_SUBSCRIPTIONS));
@@ -77,9 +64,17 @@ static int properties_changed_handler(
         GGL_LOGD("Signal received after unref.");
         return -1;
     }
+    uint32_t handle = handles[index];
+    if (handle == 0) {
+        GGL_LOGD("Signal received after handle closed.");
+        return -1;
+    }
 
-    uint32_t handle = atomic_load(&handles[index]);
     GglBuffer component_name = component_name_buf((int) index);
+    sd_bus *bus = sd_bus_message_get_bus(m);
+    if (bus == NULL) {
+        GGL_LOGW("No bus connection?");
+    }
 
     const char *unit_path = sd_bus_message_get_path(m);
     if (unit_path == NULL) {
@@ -132,7 +127,7 @@ static GglError register_dbus_signal(int index) {
     sd_bus_message *reply = NULL;
     const char *unit_path = NULL;
     ret = get_unit_path(
-        bus, (const char *) qualified_name.data, &reply, &unit_path
+        global_bus, (const char *) qualified_name.data, &reply, &unit_path
     );
     GGL_CLEANUP(sd_bus_message_unrefp, reply);
     if (ret != GGL_ERR_OK) {
@@ -141,7 +136,7 @@ static GglError register_dbus_signal(int index) {
 
     sd_bus_slot *slot = NULL;
     int sd_err = sd_bus_match_signal(
-        bus,
+        global_bus,
         &slot,
         NULL,
         unit_path,
@@ -157,58 +152,45 @@ static GglError register_dbus_signal(int index) {
         return translate_dbus_call_error(sd_err);
     }
     slots[index] = slot;
+    GGL_LOGD("Accepting subscription.");
+    ggl_sub_accept(
+        handles[index], gghealthd_unregister_lifecycle_subscription, NULL
+    );
     return GGL_ERR_OK;
 }
 
 static GglError unregister_dbus_signal(int index) {
     GGL_LOGD("Event loop thread disabling signal for %d.", index);
     sd_bus_slot_unref(slots[index]);
-    atomic_store(&handles[index], 0);
     slots[index] = NULL;
+    handles[index] = 0;
     component_names_len[index] = 0;
     return GGL_ERR_OK;
 }
 
-static int event_fd_handler(
-    sd_event_source *s, int fd, uint32_t revents, void *userdata
-) {
-    (void) userdata;
-    (void) revents;
-    (void) s;
-    uint8_t event_bytes[8] = { 0 };
-    GglError ret = ggl_file_read_exact(fd, GGL_BUF(event_bytes));
-    pthread_mutex_lock(&mtx);
-    if (ret == GGL_ERR_OK) {
-        int index = atomic_load(&operation_index);
-        assert((index >= 0) && (index < GGHEALTHD_MAX_SUBSCRIPTIONS));
-        if (slots[index] == NULL) {
-            ret = register_dbus_signal(index);
-        } else {
-            ret = unregister_dbus_signal(index);
-        }
-    }
-    atomic_store(&last_result, ret);
-    pthread_cond_signal(&cond);
-    pthread_mutex_unlock(&mtx);
-    return 0;
+static sd_event *sd_event_ctx;
+
+static void event_handle_callback(void) {
+    GGL_LOGD("Event handle callback.");
+    int ret;
+    while ((ret = sd_event_run(sd_event_ctx, 0)) > 0) { }
+    GGL_LOGD("Event loop returned %d.", ret);
 }
 
-void *health_event_loop_thread(void *ctx) {
-    (void) ctx;
+void init_health_events(void) {
     while (true) {
-        GglError ret = open_bus(&bus);
+        GglError ret = open_bus(&global_bus);
         if (ret == GGL_ERR_OK) {
             break;
         }
         GGL_LOGE("Failed to open bus.");
         ggl_sleep(1);
     }
-    GGL_CLEANUP(sd_bus_unrefp, bus);
 
     do {
         sd_bus_error error = SD_BUS_ERROR_NULL;
         int sd_ret = sd_bus_call_method(
-            bus,
+            global_bus,
             DEFAULT_DESTINATION,
             DEFAULT_PATH,
             MANAGER_INTERFACE,
@@ -240,47 +222,20 @@ void *health_event_loop_thread(void *ctx) {
         ggl_sleep(1);
     }
 
-    while (true) {
-        int sd_ret = sd_event_add_io(
-            e, NULL, event_fd, EPOLLIN, event_fd_handler, NULL
-        );
-        if (sd_ret >= 0) {
-            break;
-        }
-        GGL_LOGE("Failed to add event_fd event (errno=%d)", -sd_ret);
-        ggl_sleep(1);
+    int sd_ret = sd_bus_attach_event(global_bus, e, 0);
+    if (sd_ret < 0) {
+        GGL_LOGE("Failed to attach bus event %p", (void *) global_bus);
     }
 
-    sd_bus_attach_event(bus, e, 0);
-
-    GGL_LOGD("Started event loop.");
-    while (true) {
-        int sd_ret = sd_event_loop(e);
-        GGL_LOGE("Bailed out of event loop (ret=%d)", sd_ret);
-        ggl_sleep(1);
-    }
+    // TODO: replace with setting up a larger epoll
+    sd_event_ctx = e;
+    ggl_socket_server_ext_fd = sd_event_get_fd(e);
+    ggl_socket_server_ext_handler = event_handle_callback;
+    GGL_LOGD("sd_event_fd %d", ggl_socket_server_ext_fd);
+    event_handle_callback();
 }
 
-// core-bus thread functions //
-
-static GglError signal_event_loop_and_wait(int index) {
-    atomic_store(&operation_index, index);
-    uint64_t event = 1;
-    uint8_t event_bytes[sizeof(event)];
-    memcpy(event_bytes, &event, sizeof(event));
-    GglError ret = ggl_file_write(event_fd, GGL_BUF(event_bytes));
-    if (ret != GGL_ERR_OK) {
-        return ret;
-    }
-    GGL_LOGD("Waiting for sd_bus thread to handle request for %d.", index);
-    pthread_mutex_lock(&mtx);
-    while ((ret = atomic_exchange(&last_result, GGL_ERR_EXPECTED))
-           == GGL_ERR_EXPECTED) {
-        pthread_cond_wait(&cond, &mtx);
-    }
-    pthread_mutex_unlock(&mtx);
-    return ret;
-}
+// core-bus functions //
 
 GglError gghealthd_register_lifecycle_subscription(
     GglBuffer component_name, uint32_t handle
@@ -293,9 +248,10 @@ GglError gghealthd_register_lifecycle_subscription(
     );
 
     // find first free slot
+
     int index = 0;
     for (; index < GGHEALTHD_MAX_SUBSCRIPTIONS; ++index) {
-        if (atomic_load(&handles[index]) == 0) {
+        if (handles[index] == 0) {
             break;
         }
     }
@@ -305,11 +261,10 @@ GglError gghealthd_register_lifecycle_subscription(
     }
 
     GGL_LOGT("Initializing subscription (index=%d).", index);
-
     memcpy(component_names[index], component_name.data, component_name.len);
     component_names_len[index] = component_name.len;
-    atomic_store(&handles[index], handle);
-    GglError ret = signal_event_loop_and_wait(index);
+    handles[index] = handle;
+    GglError ret = register_dbus_signal(index);
     return ret;
 }
 
@@ -317,9 +272,9 @@ void gghealthd_unregister_lifecycle_subscription(void *ctx, uint32_t handle) {
     GGL_LOGT("Unregistering %" PRIu32, handle);
     (void) ctx;
     for (int index = 0; index < GGHEALTHD_MAX_SUBSCRIPTIONS; ++index) {
-        if (atomic_load(&handles[index]) == handle) {
+        if (handles[index] == handle) {
             GGL_LOGT("Found handle (index=%d).", index);
-            signal_event_loop_and_wait(index);
+            unregister_dbus_signal(index);
         }
     }
 }

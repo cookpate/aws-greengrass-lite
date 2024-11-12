@@ -143,9 +143,6 @@ static GglError subscribe_to_lifecycle_completion(
         return ret;
     }
 
-    GGL_LOGD("Accepting subscription.");
-    ggl_sub_accept(handle, gghealthd_unregister_lifecycle_subscription, NULL);
-
     GglBuffer status;
     GglError error = gghealthd_get_status(component_name->buf, &status);
     if (error != GGL_ERR_OK) {

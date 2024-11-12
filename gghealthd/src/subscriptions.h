@@ -15,6 +15,6 @@ GglError gghealthd_register_lifecycle_subscription(
 
 void gghealthd_unregister_lifecycle_subscription(void *ctx, uint32_t handle);
 
-void *health_event_loop_thread(void *ctx);
+void init_health_events(void);
 
 #endif
