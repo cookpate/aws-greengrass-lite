@@ -114,7 +114,7 @@ process_connection_kit() {
         unzip -jo "${KIT}" -d "${gg_confdir}/"
         echo "Connection Kit unzipped to ${gg_confdir}/"
 
-        sudo sed -i -e s:{{config_dir}}:\/etc\/greengrass:g -e s:{{data_dir}}:\/var\/lib\/greengrass:g -e s:{{nucleus_component}}:aws.greengrass.Nucleus-Lite:g ${gg_confdir}/config.yaml
+        sudo sed -i -e s:{{config_dir}}:\/etc\/greengrass:g -e s:{{data_dir}}:\/var\/lib\/greengrass:g -e s:{{nucleus_component}}:aws.greengrass.NucleusLite:g ${gg_confdir}/config.yaml
     else
         echo "Error: Connection Kit file not found: ${KIT}"
         exit 1

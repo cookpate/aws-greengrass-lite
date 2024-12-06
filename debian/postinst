@@ -45,7 +45,7 @@ create_config_file() {
 system:
   rootPath: "${gg_workingdir}"
 services:
-  aws.greengrass.Nucleus-Lite:
+  aws.greengrass.NucleusLite:
     componentType: "NUCLEUS"
     configuration:
       runWithDefault:
