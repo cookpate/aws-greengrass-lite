@@ -306,7 +306,7 @@ static GglError subscribe_callback(void *ctx, uint32_t handle, GglObject data) {
 
             // Stop iotcored here
             GGL_LOGI("Process Complete, Your device is now provisioned");
-            exec_kill_process(global_iotcored_pid);
+            ggl_exec_kill_process(global_iotcored_pid);
 
             // TODO: Find a way to terminate cleanly with iotcored
         }

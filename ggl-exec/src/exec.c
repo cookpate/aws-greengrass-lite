@@ -8,83 +8,47 @@
 #include <errno.h>
 #include <ggl/error.h>
 #include <ggl/log.h>
-#include <ggl/utils.h>
 #include <signal.h>
+#include <spawn.h>
 #include <string.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
-GglError exec_command_with_child_wait(char *args[], pid_t *child_pid) {
-    GglError return_status = GGL_ERR_OK;
-
-    // Fork so that parent can live after execvp
-    pid_t pid = fork();
-
-    if (pid == -1) { // Something went wrong
-        GGL_LOGE("Error, Unable to fork");
-        return_status = GGL_ERR_FAILURE;
-
-    } else if (pid == 0) { // Child process: execute the script
-        execvp(args[0], args);
-
-        // If execvp returns, it must have failed
-        GGL_LOGE("Error: execvp returned unexpectedly");
-        return_status = GGL_ERR_FAILURE;
-
-    } else { // Parent process: wait for the child to finish
-
-        *child_pid = pid; // Store the child process ID
-
-        int child_status;
-        if (waitpid(pid, &child_status, 0) == -1) {
-            GGL_LOGE("Error, waitpid got hit");
-        } else {
-            if (WIFEXITED(child_status)) {
-                if (WEXITSTATUS(child_status) != 0) {
-                    return_status = GGL_ERR_FAILURE;
-                }
-                GGL_LOGI(
-                    "Script exited with child status %d\n",
-                    WEXITSTATUS(child_status)
-                );
-
-            } else {
-                GGL_LOGD("Script did not exit normally");
-                return_status = GGL_ERR_FAILURE;
-            }
-        }
+GglError ggl_exec_command(char *args[]) {
+    int pid = -1;
+    GglError err = ggl_exec_command_async(args, &pid);
+    if (err != GGL_ERR_OK) {
+        return err;
     }
-    return return_status;
+
+    int child_status;
+    if (waitpid(pid, &child_status, 0) == -1) {
+        GGL_LOGE("Error, waitpid got hit");
+        return GGL_ERR_FAILURE;
+    }
+    if (!WIFEXITED(child_status)) {
+        GGL_LOGD("Script did not exit normally");
+        return GGL_ERR_FAILURE;
+    }
+    GGL_LOGI("Script exited with child status %d\n", WEXITSTATUS(child_status));
+    if (WEXITSTATUS(child_status) != 0) {
+        return GGL_ERR_FAILURE;
+    }
+    return GGL_ERR_OK;
 }
 
-GglError exec_command_without_child_wait(char *args[], pid_t *child_pid) {
-    GglError return_status = GGL_ERR_OK;
-
-    // Fork so that parent can live after execvp
-    pid_t pid = fork();
-
-    if (pid == -1) { // Something went wrong
-        GGL_LOGE("Error, Unable to fork");
-        return_status = GGL_ERR_FAILURE;
-
-    } else if (pid == 0) { // Child process: execute the script
-        execvp(args[0], args);
-
-        // If execvp returns, it must have failed
-        GGL_LOGE("Error: execvp returned unexpectedly");
-        return_status = GGL_ERR_FAILURE;
-
-    } else { // Parent process: returns without waiting
-
-        *child_pid = pid; // Store the child process ID
-
-        // Add a slight delay
-        ggl_sleep(5);
+GglError ggl_exec_command_async(char *args[], pid_t *child_pid) {
+    pid_t pid;
+    int ret = posix_spawnp(&pid, args[0], NULL, NULL, args, environ);
+    if (ret != 0) {
+        GGL_LOGE("Error, unable to spawn (%d)", ret);
+        return GGL_ERR_FAILURE;
     }
-    return return_status;
+    *child_pid = pid;
+    return GGL_ERR_OK;
 }
 
-GglError exec_kill_process(pid_t process_id) {
+GglError ggl_exec_kill_process(pid_t process_id) {
     // Send the SIGTERM signal to the process
 
     // NOLINTBEGIN(concurrency-mt-unsafe, readability-else-after-return)

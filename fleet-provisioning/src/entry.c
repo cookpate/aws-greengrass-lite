@@ -31,8 +31,7 @@ static GglError start_iotcored(FleetProvArgs *args, pid_t *iotcored_pid) {
             args->root_ca_path,   "-c", args->claim_cert_path, "-k",
             args->claim_key_path, NULL };
 
-    GglError ret
-        = exec_command_without_child_wait(iotcore_d_args, iotcored_pid);
+    GglError ret = ggl_exec_command_async(iotcore_d_args, iotcored_pid);
 
     GGL_LOGD("PID for new iotcored: %d", *iotcored_pid);
 
@@ -246,7 +245,7 @@ GglError run_fleet_prov(FleetProvArgs *args) {
         &(int64_t) { 0 }
     );
     if (ret != GGL_ERR_OK) {
-        exec_kill_process(iotcored_pid);
+        ggl_exec_kill_process(iotcored_pid);
         return ret;
     }
 
@@ -283,7 +282,7 @@ GglError run_fleet_prov(FleetProvArgs *args) {
 
     if (ret != GGL_ERR_OK) {
         GGL_LOGE("Something went wrong. Killing iotcored");
-        exec_kill_process(iotcored_pid);
+        ggl_exec_kill_process(iotcored_pid);
 
         return ret;
     }
