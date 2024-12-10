@@ -18,12 +18,13 @@ This project uses the following third party library dependencies:
 - libuuid
 - libevent
 - libzip
+- libcgroup-tools
 
 On Ubuntu, these can be installed with:
 
 ```sh
 sudo apt install libssl-dev libcurl4-openssl-dev libsqlite3-dev libyaml-dev \
-  libsystemd-dev liburiparser-dev uuid-dev libevent-dev libzip-dev
+  libsystemd-dev liburiparser-dev uuid-dev libevent-dev libzip-dev cgroup-tools
 ```
 
 ## Build tools

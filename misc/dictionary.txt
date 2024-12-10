@@ -2,6 +2,7 @@ aarch64
 ALLOCN
 argp
 awsiotsdk
+cgexec
 clientfd
 clientv
 coremqtt
@@ -58,6 +59,7 @@ iotcoredfleet
 iwyu
 journalctl
 keyid
+libcgroup
 libsystemd
 liburiparser
 libuuid
@@ -111,6 +113,7 @@ unrefp
 unsuback
 uriparser
 uuid
+venv
 WERROR
 Xiwyu
 xlink

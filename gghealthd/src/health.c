@@ -11,72 +11,16 @@
 #include <ggl/buffer.h>
 #include <ggl/cleanup.h>
 #include <ggl/error.h>
+#include <ggl/exec.h>
 #include <ggl/log.h>
 #include <ggl/map.h>
 #include <ggl/object.h>
+#include <ggl/vector.h>
 #include <pthread.h>
 #include <systemd/sd-bus.h>
 #include <systemd/sd-daemon.h>
 #include <stdint.h>
 #include <stdlib.h>
-
-// N.D: returned string must be freed by caller
-static GglError get_property_string(
-    sd_bus *bus,
-    const char *qualified_name,
-    char *interface,
-    char *property,
-    char **value
-) {
-    assert(bus != NULL);
-    assert(qualified_name != NULL);
-    assert(interface != NULL);
-    assert(property != NULL);
-    assert((value != NULL) && (*value == NULL));
-
-    sd_bus_message *reply = NULL;
-    const char *unit_path = NULL;
-    GglError err = get_unit_path(bus, qualified_name, &reply, &unit_path);
-    GGL_CLEANUP(sd_bus_message_unrefp, reply);
-    if (err != GGL_ERR_OK) {
-        return err;
-    }
-
-    sd_bus_error error = SD_BUS_ERROR_NULL;
-    int sd_ret = sd_bus_get_property_string(
-        bus, DEFAULT_DESTINATION, unit_path, interface, property, &error, value
-    );
-    GGL_CLEANUP(sd_bus_error_free, error);
-    if (sd_ret < 0) {
-        return GGL_ERR_FATAL;
-    }
-    return GGL_ERR_OK;
-}
-
-static GglError get_component_pid(
-    sd_bus *bus, const char *component_name, int *pid
-) {
-    // TODO: there are MAIN_PID and CONTROL_PID properties. MAIN_PID is probably
-    // sufficient for sd_pid_notify. Components probably won't have more than
-    // one active processes.
-    char *pid_string = NULL;
-    GglError err = get_property_string(
-        bus, component_name, SERVICE_INTERFACE, "MAIN_PID", &pid_string
-    );
-    GGL_CLEANUP(cleanup_free, pid_string);
-    if (err != GGL_ERR_OK) {
-        GGL_LOGE("Unable to acquire pid");
-        *pid = -1;
-        return err;
-    }
-
-    *pid = atoi(pid_string);
-    if (*pid <= 0) {
-        return GGL_ERR_NOENTRY;
-    }
-
-    return GGL_ERR_OK;
-}
 
 GglError gghealthd_get_status(GglBuffer component_name, GglBuffer *status) {
     assert(status != NULL);
@@ -132,28 +76,29 @@ GglError gghealthd_update_status(GglBuffer component_name, GglBuffer status) {
     const GglMap STATUS_MAP = GGL_MAP(
         { GGL_STR("NEW"), GGL_OBJ_NULL() },
         { GGL_STR("INSTALLED"), GGL_OBJ_NULL() },
-        { GGL_STR("STARTING"), GGL_OBJ_BUF(GGL_STR("RELOADING=1")) },
-        { GGL_STR("RUNNING"), GGL_OBJ_BUF(GGL_STR("READY=1")) },
-        { GGL_STR("ERRORED"), GGL_OBJ_BUF(GGL_STR("ERRNO=71")) },
-        { GGL_STR("BROKEN"), GGL_OBJ_BUF(GGL_STR("ERRNO=71")) },
-        { GGL_STR("STOPPING"), GGL_OBJ_BUF(GGL_STR("STOPPING=1")) },
+        { GGL_STR("STARTING"), GGL_OBJ_BUF(GGL_STR("--reloading")) },
+        { GGL_STR("RUNNING"), GGL_OBJ_BUF(GGL_STR("--ready")) },
+        { GGL_STR("ERRORED"), GGL_OBJ_NULL() },
+        { GGL_STR("BROKEN"), GGL_OBJ_NULL() },
+        { GGL_STR("STOPPING"), GGL_OBJ_BUF(GGL_STR("--stopping")) },
         { GGL_STR("FINISHED"), GGL_OBJ_NULL() }
     );
 
-    GglObject *obj = NULL;
-    if (!ggl_map_get(STATUS_MAP, status, &obj)) {
+    GglObject *status_obj = NULL;
+    if (!ggl_map_get(STATUS_MAP, status, &status_obj)) {
         GGL_LOGE("Invalid lifecycle_state");
         return GGL_ERR_INVALID;
     }
 
     uint8_t qualified_name[SERVICE_NAME_MAX_LEN + 1] = { 0 };
+    GglBuffer qualified_name_buf = GGL_BUF(qualified_name);
 
     GglError err = verify_component_exists(component_name);
     if (err != GGL_ERR_OK) {
         return err;
     }
 
-    err = get_service_name(component_name, &GGL_BUF(qualified_name));
+    err = get_service_name(component_name, &qualified_name_buf);
     if (err != GGL_ERR_OK) {
         return err;
     }
@@ -165,28 +110,39 @@ GglError gghealthd_update_status(GglBuffer component_name, GglBuffer status) {
         return err;
     }
 
-    if (obj->type == GGL_TYPE_NULL) {
+    if (status_obj->type == GGL_TYPE_NULL) {
         return GGL_ERR_OK;
     }
 
-    int pid = 0;
-    err = get_component_pid(bus, (const char *) qualified_name, &pid);
+    GglByteVec cgroup = GGL_BYTE_VEC((uint8_t[128]) { 0 });
+    ggl_byte_vec_chain_append(&err, &cgroup, GGL_STR("pids:/system.slice/"));
+    ggl_byte_vec_chain_append(&err, &cgroup, qualified_name_buf);
+    ggl_byte_vec_chain_push(&err, &cgroup, '\0');
     if (err != GGL_ERR_OK) {
-        return err;
+        return GGL_ERR_FAILURE;
     }
 
-    int ret = sd_pid_notify(pid, 0, (const char *) obj->buf.data);
-    if (ret < 0) {
-        GGL_LOGE("Unable to update component state (errno=%d)", -ret);
-        return GGL_ERR_FATAL;
+    char *argv[] = { "cgexec",
+                     "-g",
+                     (char *) cgroup.buf.data,
+                     "--",
+                     "systemd-notify",
+                     (char *) status_obj->buf.data,
+                     NULL };
+    err = ggl_exec_command(argv);
+    if (err != GGL_ERR_OK) {
+        GGL_LOGE("Failed to notify status");
     }
+
     GGL_LOGD(
-        "Component %.*s reported state updating to %.*s\n",
+        "Component %.*s reported state updating to %.*s (%s)",
         (int) component_name.len,
         (const char *) component_name.data,
         (int) status.len,
-        status.data
+        status.data,
+        status_obj->buf.data
     );
+
     return GGL_ERR_OK;
 }
 
@@ -210,5 +166,6 @@ static pthread_t event_thread;
 
 GglError gghealthd_init(void) {
     pthread_create(&event_thread, NULL, health_event_loop_thread, NULL);
+    sd_notify(0, "READY=1");
     return GGL_ERR_OK;
 }

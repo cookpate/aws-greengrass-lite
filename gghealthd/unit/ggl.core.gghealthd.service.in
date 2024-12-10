@@ -7,20 +7,14 @@ PartOf=greengrass-lite.target
 WantedBy=greengrass-lite.target
 
 [Service]
-Type=exec
+Type=notify
 ExecStart=@CMAKE_INSTALL_PREFIX@/@CMAKE_INSTALL_BINDIR@/@name@
 Restart=always
 RestartSec=1
 # Disallow from having overly-permissive capabilities
 CapabilityBoundingSet=~CAP_SYS_ADMIN ~CAP_SYS_PTRACE
-User=@GGL_SYSTEMD_SYSTEM_USER@
-Group=@GGL_SYSTEMD_SYSTEM_GROUP@
 WorkingDirectory=/var/lib/greengrass
 
 [Unit]
 Description=core-bus abstract orchestrator interface
 After=ggl.core.ggconfigd.service
-
-# Allow gghealthd to change other service's active states
-[Service]
-NotifyAccess=all

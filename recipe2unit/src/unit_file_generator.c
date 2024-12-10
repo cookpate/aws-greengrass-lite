@@ -410,6 +410,9 @@ static GglError manifest_builder(
             lifecycle_script_selection = GGL_STR("startup");
             ret = ggl_byte_vec_append(out, GGL_STR("RemainAfterExit=true\n"));
             ggl_byte_vec_chain_append(&ret, out, GGL_STR("Type=notify\n"));
+            // Allow other processes in the cgroup to call sd_pid_notify on the
+            // unit's behalf (i.e. gghealthd)
+            ggl_byte_vec_chain_append(&ret, out, GGL_STR("NotifyAccess=all\n"));
             if (ret != GGL_ERR_OK) {
                 GGL_LOGE("Failed to add unit type information");
                 return GGL_ERR_FAILURE;
