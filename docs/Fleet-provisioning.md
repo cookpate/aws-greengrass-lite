@@ -77,7 +77,7 @@ system:
   rootPath: "/home/ubuntu/aws-greengrass-lite/run_fleet/"
   thingName: ""
 services:
-  aws.greengrass.Nucleus-Lite:
+  aws.greengrass.NucleusLite:
     componentType: "NUCLEUS"
     configuration:
       awsRegion: "us-east-1"

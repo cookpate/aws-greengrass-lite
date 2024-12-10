@@ -25,7 +25,7 @@ The structure of the configuration hierarchy is as follows:
 |  ├─ rootCaPath
 |  └─ certificateFilePath
 └─ services/              # component-specific configurations
-   ├─ Nucleus-Lite/         # A reserved component section shared by GG-Lite core components
+   ├─ NucleusLite/         # A reserved component section shared by GG-Lite core components
    │  ├─ iotRoleAlias
    │  ├─ iotDataEndpoint
    |  ├─ iotCredEndpoint

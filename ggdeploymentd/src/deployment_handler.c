@@ -119,7 +119,7 @@ static GglError get_region(GglByteVec *region) {
     GglError ret = ggl_gg_config_read_str(
         GGL_BUF_LIST(
             GGL_STR("services"),
-            GGL_STR("aws.greengrass.Nucleus-Lite"),
+            GGL_STR("aws.greengrass.NucleusLite"),
             GGL_STR("configuration"),
             GGL_STR("awsRegion")
         ),
@@ -164,7 +164,7 @@ static GglError get_posix_user(char **posix_user) {
     GglError ret = ggl_gg_config_read_str(
         GGL_BUF_LIST(
             GGL_STR("services"),
-            GGL_STR("aws.greengrass.Nucleus-Lite"),
+            GGL_STR("aws.greengrass.NucleusLite"),
             GGL_STR("configuration"),
             GGL_STR("runWithDefault"),
             GGL_STR("posixUser")
@@ -186,7 +186,7 @@ static GglError get_data_endpoint(GglByteVec *endpoint) {
         = GGL_MAP({ GGL_STR("key_path"),
                     GGL_OBJ_LIST(GGL_LIST(
                         GGL_OBJ_BUF(GGL_STR("services")),
-                        GGL_OBJ_BUF(GGL_STR("aws.greengrass.Nucleus-Lite")),
+                        GGL_OBJ_BUF(GGL_STR("aws.greengrass.NucleusLite")),
                         GGL_OBJ_BUF(GGL_STR("configuration")),
                         GGL_OBJ_BUF(GGL_STR("iotDataEndpoint"))
                     )) });
@@ -221,7 +221,7 @@ static GglError get_data_port(GglByteVec *port) {
         = GGL_MAP({ GGL_STR("key_path"),
                     GGL_OBJ_LIST(GGL_LIST(
                         GGL_OBJ_BUF(GGL_STR("services")),
-                        GGL_OBJ_BUF(GGL_STR("aws.greengrass.Nucleus-Lite")),
+                        GGL_OBJ_BUF(GGL_STR("aws.greengrass.NucleusLite")),
                         GGL_OBJ_BUF(GGL_STR("configuration")),
                         GGL_OBJ_BUF(GGL_STR("greengrassDataPlanePort"))
                     )) });

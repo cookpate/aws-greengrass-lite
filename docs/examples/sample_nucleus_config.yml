@@ -6,7 +6,7 @@ system:
   rootPath: "/var/lib/greengrass"
   thingName: "ExampleGGDevice"
 services:
-  aws.greengrass.Nucleus-Lite:
+  aws.greengrass.NucleusLite:
     componentType: "NUCLEUS"
     configuration:
       awsRegion: "us-west-2"

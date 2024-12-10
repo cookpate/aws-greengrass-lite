@@ -143,7 +143,7 @@ GglError publish_fleet_status_update(
         // ignore core components for now, gghealthd does not support
         // getting their health yet
         GglList ignored_components = GGL_LIST(
-            GGL_OBJ_BUF(GGL_STR("aws.greengrass.Nucleus-Lite")),
+            GGL_OBJ_BUF(GGL_STR("aws.greengrass.NucleusLite")),
             GGL_OBJ_BUF(GGL_STR("aws.greengrass.fleet_provisioning")),
             GGL_OBJ_BUF(GGL_STR("DeploymentService")),
             GGL_OBJ_BUF(GGL_STR("FleetStatusService")),

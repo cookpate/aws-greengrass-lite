@@ -2,7 +2,7 @@
 system:
   rootPath: "/var/lib/greengrass"
 services:
-  aws.greengrass.Nucleus-Lite:
+  aws.greengrass.NucleusLite:
     componentType: "NUCLEUS"
     configuration:
       runWithDefault:

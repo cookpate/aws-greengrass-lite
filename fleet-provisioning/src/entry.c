@@ -127,7 +127,7 @@ static GglError fetch_from_db(FleetProvArgs *args) {
         ret = ggl_gg_config_write(
             GGL_BUF_LIST(
                 GGL_STR("services"),
-                GGL_STR("aws.greengrass.Nucleus-Lite"),
+                GGL_STR("aws.greengrass.NucleusLite"),
                 GGL_STR("configuration"),
                 GGL_STR("iotDataEndpoint")
             ),

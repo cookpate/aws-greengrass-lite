@@ -549,7 +549,7 @@ GglError runner(const RecipeRunnerArgs *args) {
     ret = ggipc_get_config_str(
         conn,
         GGL_BUF_LIST(GGL_STR("awsRegion")),
-        &GGL_STR("aws.greengrass.Nucleus-Lite"),
+        &GGL_STR("aws.greengrass.NucleusLite"),
         &resp
     );
     if (ret != GGL_ERR_OK) {

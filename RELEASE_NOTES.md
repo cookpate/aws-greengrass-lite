@@ -171,4 +171,4 @@ Known Issues:
 - Fleet Provisioning does not terminate even after provisioning is complete will
   fix in future
 - If using Fleet Provisioning provide the `iotCredEndpoint` within the
-  `Nucleus-Lite`'s config scope
+  `NucleusLite`'s config scope

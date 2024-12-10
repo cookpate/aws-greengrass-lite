@@ -53,7 +53,7 @@ GglError run_tesd(void) {
     ret = ggl_gg_config_read_str(
         GGL_BUF_LIST(
             GGL_STR("services"),
-            GGL_STR("aws.greengrass.Nucleus-Lite"),
+            GGL_STR("aws.greengrass.NucleusLite"),
             GGL_STR("configuration"),
             GGL_STR("iotRoleAlias")
         ),
@@ -68,7 +68,7 @@ GglError run_tesd(void) {
     ret = ggl_gg_config_read_str(
         GGL_BUF_LIST(
             GGL_STR("services"),
-            GGL_STR("aws.greengrass.Nucleus-Lite"),
+            GGL_STR("aws.greengrass.NucleusLite"),
             GGL_STR("configuration"),
             GGL_STR("iotCredEndpoint")
         ),
