@@ -492,6 +492,23 @@ static GglError write_script_with_replacement(
         return ret;
     }
 
+    // if startup, send a ready notification before exiting
+    // otherwise, simple startup scripts will fail with 'protocol' by systemd
+    if (ggl_buffer_eq(GGL_STR("startup"), phase)) {
+        ret = ggl_file_write(out_fd, GGL_STR("\n"));
+        if (ret != GGL_ERR_OK) {
+            return ret;
+        }
+        ret = ggl_file_write(out_fd, GGL_STR("systemd-notify --ready\n"));
+        if (ret != GGL_ERR_OK) {
+            return ret;
+        }
+        ret = ggl_file_write(out_fd, GGL_STR("systemd-notify --stopping\n"));
+        if (ret != GGL_ERR_OK) {
+            return ret;
+        }
+    }
+
     return GGL_ERR_OK;
 }
 
