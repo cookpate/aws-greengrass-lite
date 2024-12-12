@@ -25,7 +25,7 @@ int main(void) {
             GGL_STR("gg_health"),
             GGL_STR("get_status"),
             GGL_MAP({ GGL_STR("component_name"),
-                      GGL_OBJ_BUF(GGL_STR("gg_health")) }),
+                      GGL_OBJ_BUF(GGL_STR("gghealthd")) }),
             &method_error,
             &alloc.alloc,
             &result

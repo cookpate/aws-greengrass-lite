@@ -5,7 +5,6 @@
 #include "subscriptions.h"
 #include "health.h"
 #include "sd_bus.h"
-#include <sys/types.h>
 #include <assert.h>
 #include <errno.h>
 #include <ggl/buffer.h>
@@ -18,10 +17,7 @@
 #include <ggl/socket_server.h>
 #include <ggl/utils.h>
 #include <inttypes.h>
-#include <pthread.h>
 #include <string.h>
-#include <sys/epoll.h>
-#include <sys/eventfd.h>
 #include <systemd/sd-bus.h>
 #include <systemd/sd-event.h>
 #include <stdbool.h>
