@@ -13,7 +13,9 @@
 #include <inttypes.h>
 #include <zip.h>
 #include <zipconf.h>
+#include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 static inline void cleanup_zip_fclose(zip_file_t **zip_entry) {
     if (*zip_entry != NULL) {
@@ -48,6 +50,35 @@ static GglError write_entry_to_fd(zip_file_t *entry, int fd) {
             return GGL_ERR_FAILURE;
         }
     }
+}
+
+static bool validate_path(GglBuffer path) {
+    if (path.len == 0) {
+        GGL_LOGW("Skipping empty path");
+        return false;
+    }
+
+    if (path.data[0] == '/') {
+        GGL_LOGW(
+            "Skipping absolute path in \"%.*s\"", (int) path.len, path.data
+        );
+        return false;
+    }
+
+    for (size_t i = 0; i + 2 < path.len; ++i) {
+        if (ggl_buffer_has_prefix(
+                ggl_buffer_substr(path, i, SIZE_MAX), GGL_STR("../")
+            )) {
+            GGL_LOGW(
+                "Skipping path with \"../\" component(s) in \"%.*s\"",
+                (int) path.len,
+                path.data
+            );
+            return false;
+        }
+    }
+
+    return true;
 }
 
 GglError ggl_zip_unarchive(
@@ -85,6 +116,9 @@ GglError ggl_zip_unarchive(
         }
 
         GglBuffer name_buf = ggl_buffer_from_null_term((char *) name);
+        if (!validate_path(name_buf)) {
+            continue;
+        }
 
         zip_file_t *entry = zip_fopen_index(zip, i, 0);
         if (entry == NULL) {
