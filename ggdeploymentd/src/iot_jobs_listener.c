@@ -25,7 +25,10 @@
 #include <ggl/vector.h>
 #include <inttypes.h>
 #include <pthread.h>
+#include <string.h>
+#include <stdatomic.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 
 #define MAX_THING_NAME_LEN 128
@@ -61,12 +64,11 @@ static uint8_t thing_name_mem[MAX_THING_NAME_LEN];
 static GglBuffer thing_name_buf;
 
 static pthread_mutex_t current_job_id_mutex = PTHREAD_MUTEX_INITIALIZER;
-static uint8_t job_update_topic_scratch[256];
 static uint8_t current_job_id_buf[64];
 static GglByteVec current_job_id;
 static uint8_t current_deployment_id_buf[64];
 static GglByteVec current_deployment_id;
-static int64_t current_job_version;
+static _Atomic int32_t current_job_version;
 
 static pthread_mutex_t listener_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t listener_cond = PTHREAD_COND_INITIALIZER;
@@ -129,8 +131,9 @@ static GglError create_next_job_execution_changed_topic(
 }
 
 static GglError update_job(
-    GglBuffer job_id, GglBuffer job_status, int64_t *version
+    GglBuffer job_id, GglBuffer job_status, _Atomic int32_t *version
 );
+
 static GglError process_job_execution(GglMap job_execution);
 
 static GglError get_thing_name(void *ctx) {
@@ -179,19 +182,19 @@ static GglError deserialize_payload(
 }
 
 static GglError update_job(
-    GglBuffer job_id, GglBuffer job_status, int64_t *version
+    GglBuffer job_id, GglBuffer job_status, _Atomic int32_t *version
 ) {
-    GGL_MTX_SCOPE_GUARD(&current_job_id_mutex);
-    GglBuffer topic = GGL_BUF(job_update_topic_scratch);
+    GglBuffer topic = GGL_BUF((uint8_t[256]) { 0 });
     GglError ret = create_update_job_topic(thing_name_buf, job_id, &topic);
     if (ret != GGL_ERR_OK) {
         return ret;
     }
 
+    int64_t local_version = atomic_load_explicit(version, memory_order_acquire);
     while (true) {
         uint8_t version_buf[16] = { 0 };
         int len = snprintf(
-            (char *) version_buf, sizeof(version_buf), "%" PRIi64, *version
+            (char *) version_buf, sizeof(version_buf), "%" PRIi64, local_version
         );
         if (len <= 0) {
             GGL_LOGE("Version too big");
@@ -215,7 +218,9 @@ static GglError update_job(
             topic, payload_object, &call_alloc.alloc, &result
         );
         if (ret == GGL_ERR_OK) {
-            ++(*version);
+            local_version
+                = atomic_fetch_add_explicit(version, 1, memory_order_acq_rel)
+                + 1;
             break;
         }
         if (ret != GGL_ERR_REMOTE) {
@@ -234,16 +239,16 @@ static GglError update_job(
             return GGL_ERR_PARSE;
         }
 
-        GglObject *status = NULL;
-        GglObject *version_number = NULL;
+        GglObject *remote_status = NULL;
+        GglObject *remote_version = NULL;
         ret = ggl_map_validate(
             execution_state->map,
             GGL_MAP_SCHEMA(
-                { GGL_STR("status"), true, GGL_TYPE_BUF, &status },
+                { GGL_STR("status"), true, GGL_TYPE_BUF, &remote_status },
                 { GGL_STR("versionNumber"),
                   true,
                   GGL_TYPE_I64,
-                  &version_number }
+                  &remote_version }
             )
         );
         if (ret != GGL_ERR_OK) {
@@ -254,11 +259,20 @@ static GglError update_job(
             GGL_LOGD("Job was canceled.");
             return GGL_ERR_OK;
         }
-        if (version_number->i64 != *version) {
-            GGL_LOGD("Updating stale job status version number.");
-            *version = version_number->i64;
+        if ((remote_version->i64 < 0) || (remote_version->i64 > INT32_MAX)) {
+            GGL_LOGE(
+                "Invalid version %" PRIi64 " received", remote_version->i64
+            );
+            return GGL_ERR_FAILURE;
         }
-        if (ggl_buffer_eq(job_status, status->buf)) {
+        if ((int32_t) remote_version->i64 != local_version) {
+            GGL_LOGD("Updating stale job status version number.");
+            atomic_store_explicit(
+                version, (int32_t) remote_version->i64, memory_order_release
+            );
+            local_version = (int32_t) remote_version->i64;
+        }
+        if (ggl_buffer_eq(job_status, remote_status->buf)) {
             GGL_LOGD("Job is already in the desired state.");
             break;
         }
@@ -272,7 +286,7 @@ static GglError update_job(
         return ret;
     }
 
-    ret = save_iot_jobs_version(current_job_version);
+    ret = save_iot_jobs_version(local_version);
     if (ret != GGL_ERR_OK) {
         GGL_LOGE("Failed to save job version to config.");
         return ret;
@@ -557,20 +571,48 @@ static void listen_for_jobs_deployments(void) {
 GglError update_current_jobs_deployment(
     GglBuffer deployment_id, GglBuffer status
 ) {
-    if (!ggl_buffer_eq(deployment_id, current_deployment_id.buf)) {
-        return GGL_ERR_NOENTRY;
+    GglBuffer job_id = GGL_BUF((uint8_t[64]) { 0 });
+    {
+        GGL_MTX_SCOPE_GUARD(&current_job_id_mutex);
+        if (!ggl_buffer_eq(deployment_id, current_deployment_id.buf)) {
+            return GGL_ERR_NOENTRY;
+        }
+        memcpy(
+            job_id.data, current_job_id.buf.data, current_deployment_id.buf.len
+        );
+        job_id.len = current_deployment_id.buf.len;
     }
 
-    return update_job(current_job_id.buf, status, &current_job_version);
+    return update_job(job_id, status, &current_job_version);
 }
 
-GglError update_bootstrap_jobs_deployment(
-    GglBuffer deployment_id, GglBuffer status, int64_t version
+GglError set_jobs_deployment_for_bootstrap(
+    GglBuffer job_id, GglBuffer deployment_id, int64_t version
 ) {
-    if (!ggl_buffer_eq(deployment_id, current_deployment_id.buf)) {
-        return GGL_ERR_NOENTRY;
+    if ((version < 0) || (version > INT32_MAX)) {
+        return GGL_ERR_INVALID;
     }
-
-    current_job_version = version;
-    return update_job(current_job_id.buf, status, &version);
+    GGL_MTX_SCOPE_GUARD(&current_job_id_mutex);
+    if (!ggl_buffer_eq(job_id, current_job_id.buf)) {
+        if (current_job_id.buf.len != 0) {
+            GGL_LOGI("Bootstrap deployment was canceled by cloud.");
+            return GGL_ERR_NOENTRY;
+        }
+        current_job_id = GGL_BYTE_VEC(current_job_id_buf);
+        GglError ret = ggl_byte_vec_append(&current_job_id, job_id);
+        if (ret != GGL_ERR_OK) {
+            GGL_LOGE("Job ID too long.");
+            return ret;
+        }
+        current_deployment_id = GGL_BYTE_VEC(current_deployment_id_buf);
+        ret = ggl_byte_vec_append(&current_deployment_id, deployment_id);
+        if (ret != GGL_ERR_OK) {
+            GGL_LOGE("Deployment ID too long.");
+            return ret;
+        }
+    }
+    atomic_store_explicit(
+        &current_job_version, (int32_t) version, memory_order_release
+    );
+    return GGL_ERR_OK;
 }
