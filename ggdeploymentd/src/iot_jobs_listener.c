@@ -249,8 +249,9 @@ static GglError update_job(
         if (ret != GGL_ERR_OK) {
             return ret;
         }
-        if (ggl_buffer_eq(job_status, GGL_STR("CANCELLED"))) {
-            GGL_LOGD("Job was cancelled.");
+        if (ggl_buffer_eq(job_status, GGL_STR("CANCELED"))) {
+            // TODO: Cancelation?
+            GGL_LOGD("Job was canceled.");
             return GGL_ERR_OK;
         }
         if (version_number->i64 != *version) {
@@ -411,7 +412,7 @@ static GglError process_job_execution(GglMap job_execution) {
     }
     switch (action) {
     case DSA_CANCEL_JOB:
-        // TODO: cancellation?
+        // TODO: cancelation?
         break;
 
     case DSA_ENQUEUE_JOB: {
@@ -461,7 +462,7 @@ static GglError next_job_execution_changed_callback(
         return GGL_ERR_FAILURE;
     }
     if (job_execution == NULL) {
-        // TODO: job cancellation
+        // TODO: job cancelation
         return GGL_ERR_OK;
     }
     ret = process_job_execution(job_execution->map);
