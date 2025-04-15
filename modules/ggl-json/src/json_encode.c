@@ -4,6 +4,7 @@
 
 #include "ggl/json_encode.h"
 #include <assert.h>
+#include <float.h>
 #include <ggl/buffer.h>
 #include <ggl/error.h>
 #include <ggl/log.h>
@@ -59,7 +60,8 @@ static GglError json_write_i64(int64_t i64, GglBuffer *buf) {
 }
 
 static GglError json_write_f64(double f64, GglBuffer *buf) {
-    int ret = snprintf((char *) buf->data, buf->len, "%g", f64);
+    int ret
+        = snprintf((char *) buf->data, buf->len, "%#.*g", DBL_DECIMAL_DIG, f64);
     if (ret < 0) {
         GGL_LOGE("Error encoding json.");
         return GGL_ERR_FAILURE;

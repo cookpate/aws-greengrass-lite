@@ -100,7 +100,7 @@ GglError ggl_handle_update_configuration(
 
     // convert timestamp from sec in floating-point(with msec precision) to msec
     // in integer
-    int64_t timestamp = (int64_t) timestamp_obj->f64 * 1000;
+    int64_t timestamp = (int64_t) (timestamp_obj->f64 * 1000.0);
     GGL_LOGT("Timestamp is %" PRId64, timestamp);
 
     GglBufList full_key_path;
