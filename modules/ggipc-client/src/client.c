@@ -30,6 +30,7 @@
 #include <limits.h>
 #include <pthread.h>
 #include <string.h>
+#include <time.h>
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -545,6 +546,145 @@ GglError ggipc_get_config_obj(
     return GGL_ERR_OK;
 }
 
+GglError ggipc_update_config(
+    int conn,
+    GglBufList key_path,
+    const struct timespec *timestamp,
+    GglObject value_to_merge
+) {
+    if ((timestamp != NULL)
+        && ((timestamp->tv_sec < 0) || (timestamp->tv_nsec < 0))) {
+        GGL_LOGE("Timestamp is negative.");
+        return GGL_ERR_UNSUPPORTED;
+    }
+
+    GglObjVec path_vec = GGL_OBJ_VEC((GglObject[GGL_MAX_OBJECT_DEPTH]) { 0 });
+    GglError ret = GGL_ERR_OK;
+    for (size_t i = 0; i < key_path.len; i++) {
+        ggl_obj_vec_chain_push(&ret, &path_vec, GGL_OBJ_BUF(key_path.bufs[i]));
+    }
+    if (ret != GGL_ERR_OK) {
+        GGL_LOGE("Key path too long.");
+        return GGL_ERR_NOMEM;
+    }
+
+    double timestamp_float = 0.0;
+    if (timestamp != NULL) {
+        timestamp_float
+            = (double) timestamp->tv_sec + ((double) timestamp->tv_nsec * 1e-9);
+    }
+
+    GglMap args = GGL_MAP(
+        { GGL_STR("keyPath"), GGL_OBJ_LIST(path_vec.list) },
+        { GGL_STR("timestamp"), GGL_OBJ_F64(timestamp_float) },
+        { GGL_STR("valueToMerge"), value_to_merge }
+    );
+
+    uint8_t error_mem[128];
+    GglBumpAlloc error_alloc = ggl_bump_alloc_init(GGL_BUF(error_mem));
+    GglIpcError remote_error = { 0 };
+    ret = ggipc_call(
+        conn,
+        GGL_STR("aws.greengrass#UpdateConfiguration"),
+        GGL_STR("aws.greengrass#UpdateConfigurationRequest"),
+        args,
+        &error_alloc.alloc,
+        NULL,
+        &remote_error
+    );
+    if (ret == GGL_ERR_REMOTE) {
+        GGL_LOGE("Server error.");
+        return GGL_ERR_FAILURE;
+    }
+
+    return ret;
+}
+
+// TODO: use GglByteVec for payload to allow in-place base64 encoding.
+GglError ggipc_publish_to_topic_binary(
+    int conn, GglBuffer topic, GglBuffer payload, GglAlloc *alloc
+) {
+    GglBuffer encoded_payload;
+    GglError ret = ggl_base64_encode(payload, alloc, &encoded_payload);
+    if (ret != GGL_ERR_OK) {
+        return ret;
+    }
+    GglMap binary_message
+        = GGL_MAP({ GGL_STR("message"), GGL_OBJ_BUF(encoded_payload) });
+    GglMap publish_message
+        = GGL_MAP({ GGL_STR("binaryMessage"), GGL_OBJ_MAP(binary_message) });
+    GglMap args = GGL_MAP(
+        { GGL_STR("topic"), GGL_OBJ_BUF(topic) },
+        { GGL_STR("publishMessage"), GGL_OBJ_MAP(publish_message) }
+    );
+
+    GglIpcError remote_error;
+    GglObject resp;
+    ret = ggipc_call(
+        conn,
+        GGL_STR("aws.greengrass#PublishToTopic"),
+        GGL_STR("aws.greengrass#PublishToTopicRequest"),
+        args,
+        alloc,
+        &resp,
+        &remote_error
+    );
+    if (ret == GGL_ERR_REMOTE) {
+        if (remote_error.error_code == GGL_IPC_ERR_UNAUTHORIZED_ERROR) {
+            GGL_LOGE(
+                "Component unauthorized: %.*s",
+                (int) remote_error.message.len,
+                remote_error.message.data
+            );
+            return GGL_ERR_UNSUPPORTED;
+        }
+        GGL_LOGE("Server error.");
+        return GGL_ERR_FAILURE;
+    }
+
+    return ret;
+}
+
+GglError ggipc_publish_to_topic_obj(
+    int conn, GglBuffer topic, GglObject payload
+) {
+    GglMap json_message = GGL_MAP({ GGL_STR("message"), payload });
+    GglMap publish_message
+        = GGL_MAP({ GGL_STR("jsonMessage"), GGL_OBJ_MAP(json_message) });
+    GglMap args = GGL_MAP(
+        { GGL_STR("topic"), GGL_OBJ_BUF(topic) },
+        { GGL_STR("publishMessage"), GGL_OBJ_MAP(publish_message) }
+    );
+
+    GglBumpAlloc error_alloc
+        = ggl_bump_alloc_init(GGL_BUF((uint8_t[128]) { 0 }));
+    GglIpcError remote_error;
+    GglObject resp;
+    GglError ret = ggipc_call(
+        conn,
+        GGL_STR("aws.greengrass#PublishToTopic"),
+        GGL_STR("aws.greengrass#PublishToTopicRequest"),
+        args,
+        &error_alloc.alloc,
+        &resp,
+        &remote_error
+    );
+    if (ret == GGL_ERR_REMOTE) {
+        if (remote_error.error_code == GGL_IPC_ERR_UNAUTHORIZED_ERROR) {
+            GGL_LOGE(
+                "Component unauthorized: %.*s",
+                (int) remote_error.message.len,
+                remote_error.message.data
+            );
+            return GGL_ERR_UNSUPPORTED;
+        }
+        GGL_LOGE("Server error.");
+        return GGL_ERR_FAILURE;
+    }
+
+    return ret;
+}
+
 // TODO: use GglByteVec for payload to allow in-place base64 encoding.
 GglError ggipc_publish_to_iot_core(
     int conn,
@@ -553,7 +693,10 @@ GglError ggipc_publish_to_iot_core(
     uint8_t qos,
     GglAlloc *alloc
 ) {
-    assert(qos <= 2);
+    if (qos > 2) {
+        GGL_LOGE("Invalid QoS \"%" PRIu8 "\" provided. QoS must be <= 2", qos);
+        return GGL_ERR_INVALID;
+    }
     GGL_LOGT("Topic name len: %zu", topic_name.len);
     GglBuffer qos_buffer = GGL_BUF((uint8_t[1]) { qos + (uint8_t) '0' });
     GglBuffer encoded_payload;

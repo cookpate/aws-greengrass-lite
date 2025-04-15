@@ -10,7 +10,10 @@
 #include <ggl/error.h>
 #include <ggl/ipc/common.h>
 #include <ggl/object.h>
+#include <time.h> // IWYU pragma: keep
 #include <stdint.h>
+
+struct timespec;
 
 #define GGL_IPC_SVCUID_LEN (16)
 
@@ -47,6 +50,27 @@ GglError ggipc_get_config_obj(
     GglObject *value
 );
 
+GglError ggipc_update_config(
+    int conn,
+    GglBufList key_path,
+    const struct timespec *timestamp,
+    GglObject value_to_merge
+);
+
+/// Uses an allocator to base64-encode a binary message.
+/// base64 encoding will allocate 4 bytes for every 3 payload bytes.
+/// Additionally, up to 128 bytes may be allocated for an error message.
+GglError ggipc_publish_to_topic_binary(
+    int conn, GglBuffer topic, GglBuffer payload, GglAlloc *alloc
+);
+
+GglError ggipc_publish_to_topic_obj(
+    int conn, GglBuffer topic, GglObject payload
+);
+
+/// Uses an allocator to base64-encode a binary message.
+/// base64 encoding will allocate 4 bytes for every 3 payload bytes.
+/// Additionally, up to 128 bytes may be allocated for an error message.
 GglError ggipc_publish_to_iot_core(
     int conn,
     GglBuffer topic_name,
