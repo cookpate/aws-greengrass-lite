@@ -137,3 +137,5 @@ With the above, you can start a local deployment with:
   --artifacts-dir ~/sample-component/artifacts \
   --add-component com.example.SampleComponent=1.0.0
 ```
+
+Further reading: [ggl-cli.md](./ggl-cli.md)

@@ -1,4 +1,4 @@
-# `ggl-cli` design
+# `ggl-cli` Usage
 
 # Overview
 
@@ -24,11 +24,21 @@ repository:
 ```
 
 To deploy this component run the following command with greengrass-lite nucleus
-installed and running: ggl-cli deploy -r ./samples/sample.ggLitePython/recipes
--a ./samples/sample.ggLitePython/artifacts -c sample.ggLitePython=1.0.0
+installed and running:
 
-The result of a local deployment can be observed by tailing system logs (i.e.
-`journalctl -x -a -f -u ggl.core.ggdeploymentd.service` on systemd init-system).
+```sh
+ggl-cli deploy \
+    --recipe-dir ./samples/sample.ggLitePython/recipes \
+    --artifacts-dir ./samples/sample.ggLitePython/artifacts \
+    --add-component sample.ggLitePython=1.0.0
+```
+
+The result of a local deployment can be observed by tailing system logs.
+Example, for systemd init systems:
+
+```sh
+journalctl -x -f -a -u ggl.core.ggdeploymentd.service
+```
 
 > Note: refer to the sample's
 > [README.md](../../../samples/sample.ggLitePython/README.md) in order to setup
