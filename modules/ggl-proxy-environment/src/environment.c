@@ -3,8 +3,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "ggl/proxy/environment.h"
+#include <assert.h>
 #include <errno.h>
 #include <ggl/arena.h>
+#include <ggl/attr.h>
 #include <ggl/buffer.h>
 #include <ggl/core_bus/gg_config.h>
 #include <ggl/error.h>
@@ -13,12 +15,18 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-static GglError setenv_wrapper(GglBufList aliases, GglBuffer value) {
+static GglError setenv_wrapper(GglBufList aliases, const char *value)
+    NULL_TERMINATED_STRING_ARG(2) NONNULL(2);
+
+static GglError setenv_wrapper(GglBufList aliases, const char *value) {
     for (size_t i = 0; i < aliases.len; ++i) {
         GglBuffer name = aliases.bufs[i];
+        assert(name.len > 0);
+        assert(name.data != NULL);
+        assert(name.data[name.len] == '\0');
         int ret
             // NOLINTNEXTLINE(concurrency-mt-unsafe)
-            = setenv((const char *) name.data, (const char *) value.data, true);
+            = setenv((const char *) name.data, value, true);
         if (ret != 0) {
             GGL_LOGE("setenv() failed with errno=%d.", errno);
             return GGL_ERR_FATAL;
@@ -47,6 +55,12 @@ GglError ggl_proxy_set_environment(void) {
         &proxy_url
     );
     if (ret == GGL_ERR_OK) {
+        if (proxy_url.len == 0) {
+            proxy_url = GGL_STR("");
+        } else {
+            assert(proxy_url.data != NULL);
+            proxy_url.data[proxy_url.len] = '\0';
+        }
         GGL_LOGD("Setting proxy environment variables from config.");
         GglBufList proxy_aliases = GGL_BUF_LIST(
             GGL_STR("all_proxy"),
@@ -56,7 +70,7 @@ GglError ggl_proxy_set_environment(void) {
             GGL_STR("HTTP_PROXY"),
             GGL_STR("HTTPS_PROXY")
         );
-        ret = setenv_wrapper(proxy_aliases, proxy_url);
+        ret = setenv_wrapper(proxy_aliases, (char *) proxy_url.data);
         if (ret != GGL_ERR_OK) {
             return ret;
         }
@@ -81,11 +95,17 @@ GglError ggl_proxy_set_environment(void) {
         &no_proxy
     );
     if (ret == GGL_ERR_OK) {
+        if (no_proxy.len == 0) {
+            no_proxy = GGL_STR("");
+        } else {
+            assert(no_proxy.data != NULL);
+            no_proxy.data[no_proxy.len] = '\0';
+        }
         GGL_LOGD("Setting noproxy list from config.");
 
         GglBufList no_proxy_aliases
             = GGL_BUF_LIST(GGL_STR("no_proxy"), GGL_STR("NO_PROXY"));
-        ret = setenv_wrapper(no_proxy_aliases, no_proxy);
+        ret = setenv_wrapper(no_proxy_aliases, (char *) no_proxy.data);
         if (ret != GGL_ERR_OK) {
             return ret;
         }
