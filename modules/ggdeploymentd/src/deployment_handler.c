@@ -8,6 +8,7 @@
 #include "component_manager.h"
 #include "deployment_model.h"
 #include "deployment_queue.h"
+#include "ggl/docker_client.h"
 #include "iot_jobs_listener.h"
 #include "priv_io.h"
 #include "stale_component.h"
@@ -800,6 +801,12 @@ static GglError get_recipe_artifacts(
                 iot_creds,
                 artifact_fd
             );
+        } else if (ggl_buffer_eq(GGL_STR("docker"), info.scheme)) {
+            err = ggl_docker_check_image(info.path);
+            if (err == GGL_ERR_NOENTRY) {
+                // TODO: login to docker registry if required.
+                err = ggl_docker_pull(info.path);
+            }
         } else {
             GGL_LOGE("Unknown artifact URI scheme");
             err = GGL_ERR_PARSE;
@@ -836,6 +843,7 @@ static GglError get_recipe_artifacts(
             }
         }
     }
+
     return GGL_ERR_OK;
 }
 

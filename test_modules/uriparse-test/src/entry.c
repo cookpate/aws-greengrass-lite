@@ -8,9 +8,9 @@
 #include <ggl/attr.h>
 #include <ggl/buffer.h>
 #include <ggl/error.h>
-#include <ggl/log.h>
 #include <ggl/uri.h>
-#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 
 static GglError docker_test(GglBuffer docker_uri, const GglUriInfo *expected)
     NONNULL(2);

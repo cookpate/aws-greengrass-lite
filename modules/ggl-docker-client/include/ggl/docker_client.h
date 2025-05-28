@@ -6,8 +6,8 @@
 #ifndef GGL_DOCKER_CLIENT_H
 #define GGL_DOCKER_CLIENT_H
 
+#include <ggl/buffer.h>
 #include <ggl/error.h>
-#include <ggl/object.h>
 
 GglError ggl_docker_check_server(void);
 GglError ggl_docker_pull(GglBuffer image_name);
