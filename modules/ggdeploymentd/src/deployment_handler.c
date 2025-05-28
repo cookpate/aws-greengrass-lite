@@ -24,6 +24,7 @@
 #include <ggl/core_bus/gg_healthd.h>
 #include <ggl/core_bus/sub_response.h>
 #include <ggl/digest.h>
+#include <ggl/docker_client.h>
 #include <ggl/error.h>
 #include <ggl/file.h>
 #include <ggl/flags.h>
@@ -729,6 +730,47 @@ static GglError get_recipe_artifacts(
             return GGL_ERR_PARSE;
         }
 
+        GglUriInfo info = { 0 };
+        {
+            GglArena alloc = ggl_arena_init(GGL_BUF(decode_buffer));
+            err = gg_uri_parse(&alloc, ggl_obj_into_buf(*uri_obj), &info);
+            if (err != GGL_ERR_OK) {
+                return err;
+            }
+        }
+
+        if (ggl_buffer_eq(GGL_STR("docker"), info.scheme)) {
+            GglBuffer docker_uri = info.path;
+            GglDockerUriInfo docker_info = { 0 };
+            err = gg_docker_uri_parse(docker_uri, &docker_info);
+            if (err != GGL_ERR_OK) {
+                GGL_LOGE(
+                    "Failed to parse docker URI \"%.*s\"",
+                    (int) docker_uri.len,
+                    docker_uri.data
+                );
+                return err;
+            }
+
+            if (((docker_info.tag.len == 0) && (docker_info.digest.len == 0))
+                || ggl_buffer_eq(docker_info.tag, GGL_STR("latest"))) {
+                GGL_LOGD("Latest tag requested. Pulling image.");
+                err = ggl_docker_pull(docker_uri);
+            } else if (ggl_docker_check_image(docker_uri) != GGL_ERR_OK) {
+                GGL_LOGD("Image not found. Pulling image.");
+                err = ggl_docker_pull(docker_uri);
+            } else {
+                GGL_LOGD("Image already found, skipping.");
+                err = GGL_ERR_OK;
+            }
+
+            if (err != GGL_ERR_OK) {
+                return GGL_ERR_FAILURE;
+            }
+            // Docker performs all other necessary checks.
+            continue;
+        }
+
         bool needs_verification = false;
         GglBuffer expected_digest;
         if (expected_digest_obj != NULL) {
@@ -750,16 +792,6 @@ static GglError get_recipe_artifacts(
                 return GGL_ERR_PARSE;
             }
             needs_verification = true;
-        }
-
-        GglUriInfo info = { 0 };
-        {
-            GglArena alloc = ggl_arena_init(GGL_BUF(decode_buffer));
-            err = gg_uri_parse(&alloc, ggl_obj_into_buf(*uri_obj), &info);
-
-            if (err != GGL_ERR_OK) {
-                return err;
-            }
         }
 
         bool needs_unarchive = false;

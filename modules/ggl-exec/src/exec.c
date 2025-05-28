@@ -4,16 +4,13 @@
  */
 
 #include "ggl/exec.h"
-#include "fcntl.h"
-#include "ggl/cleanup.h"
-#include "ggl/file.h"
-#include "ggl/socket_epoll.h"
-#include "ggl/vector.h"
-#include "stdlib.h"
 #include <errno.h>
 #include <ggl/attr.h>
 #include <ggl/buffer.h>
+#include <ggl/cleanup.h>
 #include <ggl/error.h>
+#include <ggl/file.h>
+#include <ggl/io.h>
 #include <ggl/log.h>
 #include <signal.h>
 #include <spawn.h>
@@ -21,6 +18,9 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdlib.h>
 
 static GglError wait_for_process(pid_t pid) {
     int child_status;
@@ -32,7 +32,7 @@ static GglError wait_for_process(pid_t pid) {
         GGL_LOGD("Script did not exit normally");
         return GGL_ERR_FAILURE;
     }
-    GGL_LOGI("Script exited with child status %d\n", WEXITSTATUS(child_status));
+    GGL_LOGI("Script exited with child status %d", WEXITSTATUS(child_status));
     if (WEXITSTATUS(child_status) != 0) {
         return GGL_ERR_FAILURE;
     }
@@ -118,177 +118,120 @@ GglError ggl_exec_kill_process(pid_t process_id) {
     return GGL_ERR_OK;
 }
 
-static GglError read_pipe(int fd, GglBuffer *buf) NONNULL(2);
-static GglError exec_output_ready(void *ctx, uint64_t data) NONNULL(1);
-
-static GglError read_pipe(int fd, GglBuffer *buf) {
-    ssize_t ret = read(fd, buf->data, buf->len);
-    if (ret < 0) {
-        if (errno == EINTR) {
-            return GGL_ERR_RETRY;
-        }
-        if (errno == EWOULDBLOCK) {
-            return GGL_ERR_NODATA;
-        }
-        GGL_LOGE("Failed to read fd %d: %d.", fd, errno);
-        return GGL_ERR_FAILURE;
+static void cleanup_posix_destroy_file_actions(
+    posix_spawn_file_actions_t **actions
+) {
+    if ((actions != NULL) && (*actions != NULL)) {
+        (void) posix_spawn_file_actions_destroy(*actions);
     }
-    if (ret == 0) {
-        return GGL_ERR_NODATA;
-    }
+}
 
-    *buf = ggl_buffer_substr(*buf, (size_t) ret, SIZE_MAX);
+static GglError create_pipe_file_actions(
+    posix_spawn_file_actions_t *actions, int pipe_read_fd, int pipe_write_fd
+) NONNULL(1);
+
+// configures a pipe to redirect stdout,stderr
+static GglError create_pipe_file_actions(
+    posix_spawn_file_actions_t *actions, int pipe_read_fd, int pipe_write_fd
+) {
+    if (posix_spawn_file_actions_init(actions) != 0) {
+        return GGL_ERR_NOMEM;
+    }
+    GGL_CLEANUP_ID(
+        actions_cleanup, cleanup_posix_destroy_file_actions, actions
+    );
+    // The child does not need the readable end.
+    int ret = posix_spawn_file_actions_addclose(actions_cleanup, pipe_read_fd);
+    if (ret != 0) {
+        return (ret == ENOMEM) ? GGL_ERR_NOMEM : GGL_ERR_FAILURE;
+    }
+    // Redirect both stderr and stdout to the writeable end
+    ret = posix_spawn_file_actions_adddup2(
+        actions_cleanup, pipe_write_fd, STDOUT_FILENO
+    );
+    if (ret != 0) {
+        return (ret == ENOMEM) ? GGL_ERR_NOMEM : GGL_ERR_FAILURE;
+    }
+    ret = posix_spawn_file_actions_adddup2(
+        actions_cleanup, pipe_write_fd, STDERR_FILENO
+    );
+    if (ret != 0) {
+        return (ret == ENOMEM) ? GGL_ERR_NOMEM : GGL_ERR_FAILURE;
+    }
+    ret = posix_spawn_file_actions_addclose(actions_cleanup, pipe_write_fd);
+    if (ret != 0) {
+        return (ret == ENOMEM) ? GGL_ERR_NOMEM : GGL_ERR_FAILURE;
+    }
+    actions_cleanup = NULL;
     return GGL_ERR_OK;
 }
 
-typedef struct OutputContext {
-    GglByteVec vec;
-    int out;
-    int err;
-    int pidfd;
-} OutputContext;
-
-static GglError exec_output_ready(void *ctx, uint64_t data) {
-    OutputContext *context = (OutputContext *) ctx;
-    uint8_t buffer_bytes[1024];
-    GglBuffer buffer = GGL_BUF(buffer_bytes);
-
-    switch (data) {
-        // stdout readable
-    case 1: {
-        GglError err = GGL_ERR_FAILURE;
-        while ((err = read_pipe(context->out, &buffer)) != GGL_ERR_FAILURE) {
-            if (err == GGL_ERR_NODATA) {
-                return GGL_ERR_OK;
-            }
-            if (err == GGL_ERR_OK) {
-                (void) ggl_byte_vec_append(&context->vec, buffer);
-            }
+// Read from pipe until EOF is found.
+// Writer is called until its first error is returned.
+// Pipe is flushed to allow child to exit cleanly.
+static GglError pipe_flush(int pipe_read_fd, GglWriter writer) {
+    GglError writer_error = GGL_ERR_OK;
+    while (true) {
+        uint8_t partial_buf[256];
+        GglBuffer partial = GGL_BUF(partial_buf);
+        GglError read_err = ggl_file_read(pipe_read_fd, &partial);
+        if (read_err == GGL_ERR_RETRY) {
+            continue;
         }
-        return GGL_ERR_FAILURE;
-    }
-
-    // stderr readable
-    case 2: {
-        GglError err = GGL_ERR_FAILURE;
-        while ((err = read_pipe(context->err, &buffer)) != GGL_ERR_FAILURE) {
-            if (err == GGL_ERR_NODATA) {
-                return GGL_ERR_OK;
-            }
-            if (err == GGL_ERR_OK) {
-                (void) ggl_byte_vec_append(&context->vec, buffer);
-            }
+        if (read_err != GGL_ERR_OK) {
+            return read_err;
         }
-        return GGL_ERR_FAILURE;
-    }
-
-    // Process finished
-    case 4: {
-        siginfo_t info = { 0 };
-        int ret = -1;
-
-        while (((ret = waitid(
-                     P_PIDFD, (id_t) context->pidfd, &info, WEXITED | WNOHANG
-                 ))
-                != 0)
-               && (errno == EINTR)) { }
-
-        if (ret != 0) {
-            GGL_LOGE("Couldn't wait for process (%d).", context->pidfd);
-            return GGL_ERR_FAILURE;
+        if (writer_error == GGL_ERR_OK) {
+            writer_error = ggl_writer_call(writer, partial);
         }
-        if ((info.si_code != CLD_EXITED) || (info.si_status != 0)) {
-            GGL_LOGE(
-                "Process exited uncleanly (%d:%d).",
-                info.si_code,
-                info.si_status
-            );
-            return GGL_ERR_FAILURE;
+        // EOF (pipe closed)
+        if (partial.len < sizeof(partial_buf)) {
+            return writer_error;
         }
-        GGL_LOGD("Process finished.");
-        return GGL_ERR_EXPECTED;
-    }
-
-    default:
-        return GGL_ERR_INVALID;
     }
 }
 
 GglError ggl_exec_command_with_output(
-    const char *const args[], GglBuffer *output
+    const char *const args[], GglWriter writer
 ) {
-    GglByteVec vector = ggl_byte_vec_init(*output);
-    output->len = 0;
-
-    int cout_pipe[2] = { -1, -1 };
-    int cerr_pipe[2] = { -1, -1 };
-    posix_spawn_file_actions_t action = { 0 };
-
-    int ret = pipe(cout_pipe);
+    int out_pipe[2] = { -1, -1 };
+    int ret = pipe(out_pipe);
     if (ret != 0) {
-        GGL_LOGE("Failed to create pipe (%d)", errno);
-        return GGL_ERR_FAILURE;
-    };
-    GGL_CLEANUP(cleanup_close, cout_pipe[0]);
-    GGL_CLEANUP(cleanup_close, cout_pipe[1]);
-
-    ret = pipe(cerr_pipe);
-    if (ret != 0) {
-        GGL_LOGE("Failed to create pipe (%d)", errno);
+        GGL_LOGE("Failed to create pipe (errno=%d).", errno);
         return GGL_ERR_FAILURE;
     }
-    GGL_CLEANUP(cleanup_close, cerr_pipe[0]);
-    GGL_CLEANUP(cleanup_close, cerr_pipe[1]);
+    GGL_CLEANUP(cleanup_close, out_pipe[0]);
+    GGL_CLEANUP_ID(pipe_write_cleanup, cleanup_close, out_pipe[1]);
 
-    posix_spawn_file_actions_init(&action);
-    posix_spawn_file_actions_addclose(&action, cout_pipe[0]);
-    posix_spawn_file_actions_addclose(&action, cerr_pipe[0]);
-    posix_spawn_file_actions_adddup2(&action, cout_pipe[1], 1);
-    posix_spawn_file_actions_adddup2(&action, cerr_pipe[1], 2);
-
-    posix_spawn_file_actions_addclose(&action, cout_pipe[1]);
-    posix_spawn_file_actions_addclose(&action, cerr_pipe[1]);
-    int pidfd = -1;
-    ret = pidfd_spawnp(
-        &pidfd, args[0], &action, NULL, (char *const *) args, environ
+    posix_spawn_file_actions_t actions = { 0 };
+    GglError err = create_pipe_file_actions(&actions, out_pipe[0], out_pipe[1]);
+    if (err != GGL_ERR_OK) {
+        GGL_LOGE("Failed to create posix spawn file actions.");
+        return GGL_ERR_FAILURE;
+    }
+    GGL_CLEANUP_ID(
+        actions_cleanup, cleanup_posix_destroy_file_actions, &actions
     );
 
+    pid_t pid = -1;
+    ret = posix_spawnp(
+        &pid, args[0], &actions, NULL, (char *const *) args, environ
+    );
     if (ret != 0) {
         GGL_LOGE("Error, unable to spawn (%d)", ret);
         return GGL_ERR_FAILURE;
     }
-    GGL_CLEANUP(cleanup_close, pidfd);
 
-    int epoll = -1;
-    GglError err = ggl_socket_epoll_create(&epoll);
-    if (err != GGL_ERR_OK) {
-        return err;
-    }
+    (void) posix_spawn_file_actions_destroy(actions_cleanup);
+    actions_cleanup = NULL;
+    (void) ggl_close(pipe_write_cleanup);
+    pipe_write_cleanup = -1;
 
-    ret = fcntl(cout_pipe[0], O_NONBLOCK);
-    if (ret != 0) {
-        return GGL_ERR_FAILURE;
-    }
+    GglError read_err = pipe_flush(out_pipe[0], writer);
+    GglError process_err = wait_for_process(pid);
 
-    err = ggl_socket_epoll_add(epoll, cout_pipe[0], 1);
-    if (err != GGL_ERR_OK) {
-        return err;
+    if (process_err != GGL_ERR_OK) {
+        return process_err;
     }
-
-    ret = fcntl(cerr_pipe[0], O_NONBLOCK);
-    if (ret != 0) {
-        return GGL_ERR_FAILURE;
-    }
-    err = ggl_socket_epoll_add(epoll, cerr_pipe[0], 2);
-    if (err != GGL_ERR_OK) {
-        return err;
-    }
-
-    err = ggl_socket_epoll_add(epoll, pidfd, 4);
-    OutputContext context = {
-        .vec = vector, .out = cout_pipe[0], .err = cout_pipe[1], .pidfd = pidfd
-    };
-    err = ggl_socket_epoll_run(epoll, exec_output_ready, (void *) output);
-    *output = context.vec.buf;
-    return err;
+    return read_err;
 }
