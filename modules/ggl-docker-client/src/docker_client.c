@@ -7,9 +7,24 @@
 #include <ggl/buffer.h>
 #include <ggl/error.h>
 #include <ggl/exec.h>
+#include <ggl/io.h>
 #include <ggl/log.h>
+#include <ggl/vector.h>
 #include <string.h>
-#include <stddef.h>
+#include <stdint.h>
+
+static GglError head_buf_write(void *context, GglBuffer buf) {
+    GglByteVec *output = (GglByteVec *) context;
+    GglBuffer remaining = ggl_byte_vec_remaining_capacity(*output);
+    buf = ggl_buffer_substr(buf, 0, remaining.len);
+    (void) ggl_byte_vec_append(output, buf);
+    return GGL_ERR_OK;
+}
+
+// Captures the first N bytes of a payload. The rest are silently discarded.
+static GglWriter head_buf_writer(GglByteVec *vec) {
+    return (GglWriter) { .ctx = vec, .write = head_buf_write };
+}
 
 /// The max length of a docker image name including its repository and digest
 #define DOCKER_MAX_IMAGE_LEN (4096U)
@@ -17,14 +32,16 @@
 GglError ggl_docker_check_server(void) {
     const char *args[] = { "docker", "-v", NULL };
     uint8_t output_bytes[512U] = { 0 };
-    GglBuffer output = GGL_BUF(output_bytes);
-    GglError err = ggl_exec_command_with_output(args, &output);
+    GglByteVec output = GGL_BYTE_VEC(output_bytes);
+    GglError err = ggl_exec_command_with_output(args, head_buf_writer(&output));
     if (err != GGL_ERR_OK) {
-        if (output.len == 0) {
+        if (output.buf.len == 0) {
             GGL_LOGE("Docker does not appear to be installed.");
         } else {
             GGL_LOGE(
-                "docker -v failed with '%.*s'", (int) output.len, output.data
+                "docker -v failed with '%.*s'",
+                (int) output.buf.len,
+                output.buf.data
             );
         }
     }
@@ -40,14 +57,10 @@ GglError ggl_docker_pull(GglBuffer image_name) {
     }
     memcpy(image_null_term, image_name.data, image_name.len);
     const char *args[] = { "docker", "pull", "-q", image_null_term, NULL };
-    uint8_t output_bytes[DOCKER_MAX_IMAGE_LEN + 256U] = { 0 };
-    GglBuffer output = GGL_BUF(output_bytes);
-    GglError err = ggl_exec_command_with_output(args, &output);
+    GglError err = ggl_exec_command(args);
     if (err != GGL_ERR_OK) {
-        GGL_LOGE(
-            "docker image ls -q failed: '%.*s'", (int) output.len, output.data
-        );
-        return err;
+        GGL_LOGE("docker image ls -q failed.");
+        return GGL_ERR_FAILURE;
     }
     return GGL_ERR_OK;
 }
@@ -64,16 +77,18 @@ GglError ggl_docker_remove(GglBuffer image_name) {
     const char *args[] = { "docker", "rmi", image_null_term, NULL };
 
     uint8_t output_bytes[512U] = { 0 };
-    GglBuffer output = GGL_BUF(output_bytes);
-    GglError err = ggl_exec_command_with_output(args, &output);
+    GglByteVec output = GGL_BYTE_VEC(output_bytes);
+    GglError err = ggl_exec_command_with_output(args, head_buf_writer(&output));
     if (err != GGL_ERR_OK) {
         size_t start = 0;
-        if (ggl_buffer_contains(output, GGL_STR("No such image"), &start)) {
+        if (ggl_buffer_contains(output.buf, GGL_STR("No such image"), &start)) {
             GGL_LOGD("Image was not found to delete.");
             return GGL_ERR_OK;
         }
-        GGL_LOGE("docker rmi failed: '%.*s'", (int) output.len, output.data);
-        return err;
+        GGL_LOGE(
+            "docker rmi failed: '%.*s'", (int) output.buf.len, output.buf.data
+        );
+        return GGL_ERR_FAILURE;
     }
     return GGL_ERR_OK;
 }
@@ -91,16 +106,18 @@ GglError ggl_docker_check_image(GglBuffer image_name) {
     const char *args[]
         = { "docker", "image", "ls", "-q", image_null_term, NULL };
 
-    uint8_t output_bytes[512] = { 0 };
-    GglBuffer output = GGL_BUF(output_bytes);
-    GglError err = ggl_exec_command_with_output(args, &output);
+    uint8_t output_bytes[256] = { 0 };
+    GglByteVec output = GGL_BYTE_VEC(output_bytes);
+    GglError err = ggl_exec_command_with_output(args, head_buf_writer(&output));
     if (err != GGL_ERR_OK) {
         GGL_LOGE(
-            "docker image ls -q failed: '%.*s'", (int) output.len, output.data
+            "docker image ls -q failed: '%.*s'",
+            (int) output.buf.len,
+            output.buf.data
         );
-        return err;
+        return GGL_ERR_FAILURE;
     }
-    if (output.len == 0) {
+    if (output.buf.len == 0) {
         return GGL_ERR_NOENTRY;
     }
     return GGL_ERR_OK;
