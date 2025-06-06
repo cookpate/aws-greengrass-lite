@@ -11,6 +11,7 @@
 #include <ggl/core_bus/gg_config.h>
 #include <ggl/core_bus/gg_healthd.h>
 #include <ggl/error.h>
+#include <ggl/io.h>
 #include <ggl/json_encode.h>
 #include <ggl/list.h>
 #include <ggl/log.h>
@@ -293,7 +294,7 @@ GglError publish_fleet_status_update(
     // build payload
     static uint8_t payload_buf[PAYLOAD_BUFFER_LEN];
     GglBuffer payload = GGL_BUF(payload_buf);
-    ret = ggl_json_encode(payload_obj, &payload);
+    ret = ggl_json_encode(payload_obj, ggl_buf_writer(&payload));
     if (ret != GGL_ERR_OK) {
         return ret;
     }

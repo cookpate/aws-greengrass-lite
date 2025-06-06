@@ -13,6 +13,7 @@
 #include <ggl/core_bus/client.h>
 #include <ggl/core_bus/gg_config.h>
 #include <ggl/error.h>
+#include <ggl/io.h>
 #include <ggl/json_encode.h>
 #include <ggl/log.h>
 #include <ggl/map.h>
@@ -146,8 +147,9 @@ static void request_handler(struct evhttp_request *req, void *arg) {
     static uint8_t response_cred_mem[4096];
     GglBuffer response_cred_buffer = GGL_BUF(response_cred_mem);
 
-    GglError ret_err_json
-        = ggl_json_encode(tes_formatted_obj, &response_cred_buffer);
+    GglError ret_err_json = ggl_json_encode(
+        tes_formatted_obj, ggl_buf_writer(&response_cred_buffer)
+    );
     if (ret_err_json != GGL_ERR_OK) {
         GGL_LOGE("Failed to convert the json.");
         return;

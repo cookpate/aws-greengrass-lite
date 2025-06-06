@@ -8,6 +8,7 @@
 #include <ggl/arena.h>
 #include <ggl/buffer.h>
 #include <ggl/error.h>
+#include <ggl/ipc/error.h>
 #include <ggl/ipc/limits.h>
 #include <ggl/log.h>
 #include <ggl/object.h>

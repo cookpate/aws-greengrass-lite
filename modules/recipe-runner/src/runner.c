@@ -11,6 +11,7 @@
 #include <ggl/constants.h>
 #include <ggl/error.h>
 #include <ggl/file.h>
+#include <ggl/io.h>
 #include <ggl/ipc/client.h>
 #include <ggl/ipc/client_priv.h>
 #include <ggl/ipc/limits.h>
@@ -59,7 +60,7 @@ static GglError insert_config_value(int out_fd, GglBuffer json_ptr) {
     GglBuffer final_result = GGL_BUF(copy_config_value);
 
     if (ggl_obj_type(result) != GGL_TYPE_BUF) {
-        ret = ggl_json_encode(result, &final_result);
+        ret = ggl_json_encode(result, ggl_buf_writer(&final_result));
         if (ret != GGL_ERR_OK) {
             GGL_LOGE("Failed to encode result as JSON.");
             return ret;

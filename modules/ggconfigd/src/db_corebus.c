@@ -11,6 +11,7 @@
 #include <ggl/core_bus/server.h>
 #include <ggl/error.h>
 #include <ggl/flags.h>
+#include <ggl/io.h>
 #include <ggl/json_decode.h>
 #include <ggl/json_encode.h>
 #include <ggl/list.h>
@@ -195,7 +196,7 @@ GglError ggconfig_process_nonmap(
     GglBuffer value_buffer
         = { .data = value_string, .len = sizeof(value_string) };
     GGL_LOGT("Starting json encode.");
-    GglError error = ggl_json_encode(value, &value_buffer);
+    GglError error = ggl_json_encode(value, ggl_buf_writer(&value_buffer));
     if (error != GGL_ERR_OK) {
         GGL_LOGE(
             "Json encode failed for key %s.", print_key_path(&key_path->list)
