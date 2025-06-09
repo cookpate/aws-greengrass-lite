@@ -9,6 +9,7 @@
 #include "deployment_model.h"
 #include "deployment_queue.h"
 #include "iot_jobs_listener.h"
+#include "priv_io.h"
 #include "stale_component.h"
 #include <assert.h>
 #include <errno.h>
@@ -27,7 +28,6 @@
 #include <ggl/file.h>
 #include <ggl/flags.h>
 #include <ggl/http.h>
-#include <ggl/io.h>
 #include <ggl/json_decode.h>
 #include <ggl/json_encode.h>
 #include <ggl/list.h>
@@ -1004,18 +1004,15 @@ static GglError generate_resolve_component_candidates_body(
         ggl_kv(GGL_STR("platform"), ggl_obj_map(platform_info))
     );
 
-    static uint8_t rcc_buf[4096];
-    GglBuffer rcc_body = GGL_BUF(rcc_buf);
-    ret = ggl_json_encode(ggl_obj_map(request_body), ggl_buf_writer(&rcc_body));
+    ret = ggl_json_encode(
+        ggl_obj_map(request_body), priv_byte_vec_writer(body_vec)
+    );
+    ggl_byte_vec_chain_push(&ret, body_vec, '\0');
     if (ret != GGL_ERR_OK) {
         GGL_LOGE("Error while encoding body for ResolveComponentCandidates call"
         );
         return ret;
     }
-
-    GglError byte_vec_ret = GGL_ERR_OK;
-    ggl_byte_vec_chain_append(&byte_vec_ret, body_vec, rcc_body);
-    ggl_byte_vec_chain_push(&byte_vec_ret, body_vec, '\0');
 
     GGL_LOGD("Body for call: %s", body_vec->buf.data);
 
