@@ -763,6 +763,32 @@ static GglError get_recipe_artifacts(
             }
         }
 
+        if (ggl_buffer_eq(GGL_STR("docker"), info.scheme)) {
+            err = ggl_docker_check_image(info.path);
+            if (err == GGL_ERR_NOENTRY) {
+                size_t start = 0;
+                if (ggl_buffer_contains(
+                        info.path, GGL_STR(".dkr.ecr."), &start
+                    )) {
+                    if (ggl_buffer_contains(info.path, GGL_STR("/"), &start)) {
+                        GglBuffer registry
+                            = ggl_buffer_substr(info.path, 0, start);
+                        err = ggl_docker_credentials_ecr_retrieve(
+                            registry, sigv4_from_tes(tes_creds, GGL_STR("ecr"))
+                        );
+                        if (err != GGL_ERR_OK) {
+                            GGL_LOGE("Failed to get credentails for private ECR"
+                            );
+                            return GGL_ERR_FAILURE;
+                        }
+                    }
+                }
+                // TODO: login to docker registry if required.
+                err = ggl_docker_pull(info.path);
+            }
+            return err;
+        }
+
         bool needs_unarchive = false;
         if (unarchive_obj != NULL) {
             err = get_artifact_unarchive_type(
@@ -801,12 +827,6 @@ static GglError get_recipe_artifacts(
                 iot_creds,
                 artifact_fd
             );
-        } else if (ggl_buffer_eq(GGL_STR("docker"), info.scheme)) {
-            err = ggl_docker_check_image(info.path);
-            if (err == GGL_ERR_NOENTRY) {
-                // TODO: login to docker registry if required.
-                err = ggl_docker_pull(info.path);
-            }
         } else {
             GGL_LOGE("Unknown artifact URI scheme");
             err = GGL_ERR_PARSE;

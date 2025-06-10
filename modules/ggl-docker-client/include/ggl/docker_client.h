@@ -16,6 +16,10 @@ GglError ggl_docker_check_image(GglBuffer image_name);
 GglError ggl_docker_credentials_store(
     GglBuffer registry, GglBuffer username, GglBuffer secret
 );
-GglError ggl_docker_credentials_ecr_retrieve(GglBuffer ecr_registry);
+
+typedef struct SigV4Details SigV4Details;
+GglError ggl_docker_credentials_ecr_retrieve(
+    GglBuffer ecr_registry, struct SigV4Details sigv4_details
+);
 
 #endif
