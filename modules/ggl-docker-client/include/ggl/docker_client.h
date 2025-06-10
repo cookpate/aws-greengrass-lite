@@ -13,5 +13,9 @@ GglError ggl_docker_check_server(void);
 GglError ggl_docker_pull(GglBuffer image_name);
 GglError ggl_docker_remove(GglBuffer image_name);
 GglError ggl_docker_check_image(GglBuffer image_name);
+GglError ggl_docker_credentials_store(
+    GglBuffer registry, GglBuffer username, GglBuffer secret
+);
+GglError ggl_docker_credentials_ecr_retrieve(GglBuffer ecr_registry);
 
 #endif

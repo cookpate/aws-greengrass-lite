@@ -8,7 +8,10 @@
 #include <ggl/error.h>
 #include <ggl/exec.h>
 #include <ggl/io.h>
+#include <ggl/json_encode.h>
 #include <ggl/log.h>
+#include <ggl/map.h>
+#include <ggl/object.h>
 #include <ggl/vector.h>
 #include <string.h>
 #include <stdint.h>
@@ -122,4 +125,18 @@ GglError ggl_docker_check_image(GglBuffer image_name) {
         return GGL_ERR_NOENTRY;
     }
     return GGL_ERR_OK;
+}
+
+GglError ggl_docker_credentials_store(
+    GglBuffer registry, GglBuffer username, GglBuffer secret
+) {
+    GglObject payload_obj = ggl_obj_map(GGL_MAP(
+        ggl_kv(GGL_STR("SeverURL"), ggl_obj_buf(registry)),
+        ggl_kv(GGL_STR("Username"), ggl_obj_buf(username)),
+        ggl_kv(GGL_STR("Secret"), ggl_obj_buf(secret))
+    ));
+
+    const char *const ARGS[]
+        = { "docker-credential-secretservice", "store", NULL };
+    return ggl_exec_command_with_input(ARGS, payload_obj);
 }
