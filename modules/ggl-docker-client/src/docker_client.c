@@ -6,10 +6,13 @@
 #include "ggl/docker_client.h"
 #include "ggl/cleanup.h"
 #include "ggl/file.h"
+#include "ggl/json_decode.h"
+#include <ggl/arena.h>
 #include <ggl/base64.h>
 #include <ggl/buffer.h>
 #include <ggl/error.h>
 #include <ggl/exec.h>
+#include <ggl/flags.h>
 #include <ggl/http.h>
 #include <ggl/io.h>
 #include <ggl/json_encode.h>
@@ -152,55 +155,55 @@ GglError ggl_docker_credentials_store(
 GglError ggl_docker_credentials_ecr_retrieve(
     GglBuffer ecr_registry, SigV4Details sigv4_details
 ) {
-    int fd = -1;
+    GGL_LOGD("Pulling credentials for ECR");
+    char template[] = "/tmp/ecr_credentials_XXXXXX";
+    int fd = mkstemp(template);
+    if (fd < 0) {
+        return GGL_ERR_FAILURE;
+    }
+    GGL_CLEANUP_ID(cleanup_fd, cleanup_close, fd);
+    unlink(template);
+
     uint16_t http_response = 400;
     GglError err = GGL_ERR_OK;
     {
         // ecr.<region>.amazonaws.com
-        uint8_t url_buf[512];
+        uint8_t url_buf[64];
         GglByteVec url = GGL_BYTE_VEC(url_buf);
         err = ggl_byte_vec_append(&url, GGL_STR("https://"));
         ggl_byte_vec_chain_append(&err, &url, GGL_STR("ecr."));
         ggl_byte_vec_chain_append(&err, &url, sigv4_details.aws_region);
-        ggl_byte_vec_chain_append(
-            &err, &url, GGL_STR(".amazonaws.com/GetAuthorizationToken\0")
-        );
+        ggl_byte_vec_chain_append(&err, &url, GGL_STR(".api.aws/\0"));
 
         if (err != GGL_ERR_OK) {
             GGL_LOGE("Failed to create GetAuthorizationToken URL");
             return err;
         }
-        uint8_t host_buf[256];
+        uint8_t host_buf[64];
         GglByteVec host = GGL_BYTE_VEC(host_buf);
         ggl_byte_vec_chain_append(&err, &host, GGL_STR("ecr."));
         ggl_byte_vec_chain_append(&err, &host, sigv4_details.aws_region);
-        ggl_byte_vec_chain_append(&err, &host, GGL_STR(".amazonaws.com\0"));
+        ggl_byte_vec_chain_append(&err, &host, GGL_STR(".api.aws\0"));
 
         if (err != GGL_ERR_OK) {
             GGL_LOGE("Failed to create GetAuthorizationToken host");
             return err;
         }
 
-        char template[] = "/tmp/ecr_credentials_XXXXXX";
-        fd = mkstemp(template);
-        if (fd < 0) {
-            return GGL_ERR_FAILURE;
-        }
-        unlink(template);
-
         err = sigv4_download(
             (const char *) url_buf,
             host.buf,
-            GGL_STR("GetAuthorizationToken"),
+            GGL_STR("/"),
             fd,
             sigv4_details,
             &http_response
         );
     }
 
-    GGL_CLEANUP_ID(cleanup_fd, cleanup_close, fd);
-
-    uint8_t secret_buf[4096];
+    // https://github.com/aws/containers-roadmap/issues/1589
+    // Not sure how to size this buffer as the size of a token appears to be
+    // unbounded.
+    static uint8_t secret_buf[8000];
     off_t bytes_written = lseek(fd, 0, SEEK_CUR);
     if (((uintmax_t) bytes_written > SIZE_MAX)
         || ((size_t) bytes_written > sizeof(secret_buf))) {
@@ -217,7 +220,7 @@ GglError ggl_docker_credentials_ecr_retrieve(
 
     if ((err != GGL_ERR_OK) || (http_response != 200U)) {
         GGL_LOGE(
-            "GetAuthorizationToken failed (HTTP=%" PRIu16 "): %.*s",
+            "GetAuthorizationToken failed (HTTP %" PRIu16 "): %.*s",
             http_response,
             (int) response.len,
             response.data
@@ -225,15 +228,79 @@ GglError ggl_docker_credentials_ecr_retrieve(
         return GGL_ERR_FAILURE;
     }
 
-    err = ggl_base64_decode_in_place(&response);
+    /*
+        Response Syntax:
+        {
+            "authorizationData": [
+                {
+                    "authorizationToken": "string",
+                    "expiresAt": number,
+                    "proxyEndpoint": "string"
+                }
+            ]
+        }
+    */
+    uint8_t secret_arena[512];
+    GglArena arena = ggl_arena_init(GGL_BUF(secret_arena));
+    GglObject response_obj = GGL_OBJ_NULL;
+    err = ggl_json_decode_destructive(response, &arena, &response_obj);
+    if ((err != GGL_ERR_OK) || (ggl_obj_type(response_obj)) != GGL_TYPE_MAP) {
+        return GGL_ERR_INVALID;
+    }
+    GglObject *token_list_obj = NULL;
+    if (!ggl_map_get(
+            ggl_obj_into_map(response_obj),
+            GGL_STR("authorizationData"),
+            &token_list_obj
+        )) {
+        return GGL_ERR_INVALID;
+    }
+    if (ggl_obj_type(*token_list_obj) != GGL_TYPE_LIST) {
+        return GGL_ERR_INVALID;
+    }
+    GglList token_list = ggl_obj_into_list(*token_list_obj);
+    if (token_list.len == 0) {
+        return GGL_ERR_FAILURE;
+    }
+    GglObject token_map = token_list.items[0];
+    if (ggl_obj_type(token_map) != GGL_TYPE_MAP) {
+        return GGL_ERR_INVALID;
+    }
+
+    GglObject *token_obj = NULL;
+    GglObject *registry_obj = NULL;
+    err = ggl_map_validate(
+        ggl_obj_into_map(token_map),
+        GGL_MAP_SCHEMA(
+            {
+                GGL_STR("authorizationToken"),
+                GGL_REQUIRED,
+                GGL_TYPE_BUF,
+                &token_obj,
+            },
+            { GGL_STR("proxyEndpoint"),
+              GGL_OPTIONAL,
+              GGL_TYPE_BUF,
+              &registry_obj }
+        )
+    );
+    if (err != GGL_ERR_OK) {
+        return GGL_ERR_FAILURE;
+    }
+    GglBuffer token = ggl_obj_into_buf(*token_obj);
+    err = ggl_base64_decode_in_place(&token);
     if (err != GGL_ERR_OK) {
         return GGL_ERR_PARSE;
     }
     size_t split;
-    if (!ggl_buffer_contains(response, GGL_STR(":"), &split)) {
+    if (!ggl_buffer_contains(token, GGL_STR(":"), &split)) {
         return GGL_ERR_PARSE;
     }
-    GglBuffer username = ggl_buffer_substr(response, 0, split);
-    GglBuffer secret = ggl_buffer_substr(response, split + 1U, SIZE_MAX);
-    return ggl_docker_credentials_store(ecr_registry, username, secret);
+
+    GglBuffer registry = (registry_obj != NULL)
+        ? ggl_obj_into_buf(*registry_obj)
+        : ecr_registry;
+    GglBuffer username = ggl_buffer_substr(token, 0, split);
+    GglBuffer secret = ggl_buffer_substr(token, split + 1U, SIZE_MAX);
+    return ggl_docker_credentials_store(registry, username, secret);
 }

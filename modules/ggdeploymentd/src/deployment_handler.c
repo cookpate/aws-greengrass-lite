@@ -783,10 +783,12 @@ static GglError get_recipe_artifacts(
                         }
                     }
                 }
-                // TODO: login to docker registry if required.
                 err = ggl_docker_pull(info.path);
+                if (err != GGL_ERR_OK) {
+                    return err;
+                }
             }
-            return err;
+            continue;
         }
 
         bool needs_unarchive = false;
