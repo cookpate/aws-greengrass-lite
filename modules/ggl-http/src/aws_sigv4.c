@@ -333,7 +333,6 @@ GglError aws_sigv4_ecr_post_create_header(
     if (err == GGL_ERR_OK) {
         GglBuffer all_headers_to_sign = { .data = headers_to_sign->buf.data,
                                           .len = headers_to_sign->buf.len };
-        // The payload should be empty for S3.
         err = aws_sigv4_generate_header(
             filepath,
             sigv4_details,

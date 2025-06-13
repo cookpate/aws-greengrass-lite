@@ -23,7 +23,7 @@ GglError ggl_http_ecr_get_authorization_token(
     ggl_byte_vec_chain_append(&err, &url_vec, GGL_STR("https://"));
     ggl_byte_vec_chain_append(&err, &url_vec, GGL_STR("ecr."));
     ggl_byte_vec_chain_append(&err, &url_vec, sigv4_details.aws_region);
-    ggl_byte_vec_chain_append(&err, &url_vec, GGL_STR(".api.aws/\0"));
+    ggl_byte_vec_chain_append(&err, &url_vec, GGL_STR(".api.aws\0"));
     if (err != GGL_ERR_OK) {
         return GGL_ERR_NOMEM;
     }
@@ -60,6 +60,14 @@ GglError ggl_http_ecr_get_authorization_token(
         .amz_security_token = sigv4_details.session_token,
         .host = host_vec.buf
     };
+
+    if (error == GGL_ERR_OK) {
+        error = gghttplib_add_header(
+            &curl_data,
+            GGL_STR("Content-Type"),
+            GGL_STR("application/x-amz-json-1.1")
+        );
+    }
 
     // Add amz-target header so ECR knows which Operation we are using
     if (error == GGL_ERR_OK) {
