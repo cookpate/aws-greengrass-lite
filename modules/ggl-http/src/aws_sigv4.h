@@ -76,4 +76,12 @@ GglError aws_sigv4_s3_get_create_header(
     GglBuffer *auth_header
 );
 
+GglError aws_sigv4_ecr_post_create_header(
+    GglBuffer filepath,
+    SigV4Details sigv4_details,
+    S3RequiredHeaders required_headers,
+    GglByteVec *headers_to_sign,
+    GglBuffer *auth_header
+);
+
 #endif
