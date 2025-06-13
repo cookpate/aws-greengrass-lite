@@ -162,35 +162,9 @@ GglError ggl_docker_credentials_ecr_retrieve(
     GglBuffer response = GGL_BUF(response_buf);
 
     uint16_t http_response = 400;
-    GglError err = GGL_ERR_OK;
-    {
-        // ecr.<region>.amazonaws.com
-        uint8_t url_buf[64];
-        GglByteVec url = GGL_BYTE_VEC(url_buf);
-        err = ggl_byte_vec_append(&url, GGL_STR("https://"));
-        ggl_byte_vec_chain_append(&err, &url, GGL_STR("ecr."));
-        ggl_byte_vec_chain_append(&err, &url, sigv4_details.aws_region);
-        ggl_byte_vec_chain_append(&err, &url, GGL_STR(".api.aws/\0"));
-
-        if (err != GGL_ERR_OK) {
-            GGL_LOGE("Failed to create GetAuthorizationToken URL");
-            return err;
-        }
-        uint8_t host_buf[64];
-        GglByteVec host = GGL_BYTE_VEC(host_buf);
-        ggl_byte_vec_chain_append(&err, &host, GGL_STR("ecr."));
-        ggl_byte_vec_chain_append(&err, &host, sigv4_details.aws_region);
-        ggl_byte_vec_chain_append(&err, &host, GGL_STR(".api.aws\0"));
-
-        if (err != GGL_ERR_OK) {
-            GGL_LOGE("Failed to create GetAuthorizationToken host");
-            return err;
-        }
-
-        err = ggl_http_ecr_get_authorization_token(
-            sigv4_details, &http_response, &response
-        );
-    }
+    GglError err = ggl_http_ecr_get_authorization_token(
+        sigv4_details, &http_response, &response
+    );
 
     if ((err != GGL_ERR_OK) || (http_response != 200U)) {
         GGL_LOGE(

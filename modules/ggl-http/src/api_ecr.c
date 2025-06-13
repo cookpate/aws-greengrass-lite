@@ -53,19 +53,21 @@ GglError ggl_http_ecr_get_authorization_token(
         error = gghttplib_add_post_body(&curl_data, "{}");
     }
 
-    S3RequiredHeaders required_headers
-        = { .amz_content_sha256 = GGL_STR(EMPTY_JSON_SHA256),
-            .amz_date = (GglBuffer) { .data = time_buffer, .len = date_len },
-            .amz_security_token = sigv4_details.session_token,
-            .host = host_vec.buf };
+    ECRRequiredHeaders required_headers = {
+        .amz_target
+        = GGL_STR("AmazonEC2ContainerRegistry_V20150921.GetAuthorizationToken"),
+        .amz_date = (GglBuffer) { .data = time_buffer, .len = date_len },
+        .amz_security_token = sigv4_details.session_token,
+        .host = host_vec.buf
+    };
 
-    // Add the content sha header to the curl headers too.
+    // Add amz-target header so ECR knows which Operation we are using
     if (error == GGL_ERR_OK) {
         error = gghttplib_add_header(
             &curl_data,
-            GGL_STR("x-amz-content-sha256"),
-            // Signature of empty payload is constant.
-            GGL_STR(ZERO_PAYLOAD_SHA)
+            GGL_STR("x-amz-target"),
+            GGL_STR("AmazonEC2ContainerRegistry_V20150921.GetAuthorizationToken"
+            )
         );
     }
 

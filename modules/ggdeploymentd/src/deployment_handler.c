@@ -774,7 +774,7 @@ static GglError get_recipe_artifacts(
                         GglBuffer registry
                             = ggl_buffer_substr(info.path, 0, start);
                         err = ggl_docker_credentials_ecr_retrieve(
-                            registry, sigv4_from_tes(tes_creds, GGL_STR("ecr"))
+                            registry, sigv4_from_tes(tes_creds, GGL_STR("ECR"))
                         );
                         if (err != GGL_ERR_OK) {
                             GGL_LOGE("Failed to get credentails for private ECR"

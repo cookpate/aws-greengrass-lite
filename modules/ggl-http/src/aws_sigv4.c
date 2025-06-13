@@ -283,14 +283,14 @@ GglError aws_sigv4_s3_get_create_header(
 GglError aws_sigv4_ecr_post_create_header(
     GglBuffer filepath,
     SigV4Details sigv4_details,
-    S3RequiredHeaders required_headers,
+    ECRRequiredHeaders required_headers,
     GglByteVec *headers_to_sign,
     GglBuffer *auth_header
 ) {
     GglError err;
 
     assert(required_headers.host.len > 0);
-    assert(required_headers.amz_content_sha256.len > 0);
+    assert(required_headers.amz_security_token.len > 0);
     assert(required_headers.amz_date.len > 0);
     assert(required_headers.amz_security_token.len > 0);
     assert(headers_to_sign != NULL);
@@ -324,9 +324,9 @@ GglError aws_sigv4_ecr_post_create_header(
     if (err == GGL_ERR_OK) {
         err = aws_sigv4_add_header_for_signing(
             headers_to_sign,
-            (GglBuffer) { .data = (uint8_t *) "x-amz-content-sha256",
-                          .len = sizeof("x-amz-content-sha256") - 1 },
-            required_headers.amz_content_sha256
+            (GglBuffer) { .data = (uint8_t *) "x-amz-target",
+                          .len = sizeof("x-amz-target") - 1 },
+            required_headers.amz_target
         );
     }
 
