@@ -32,7 +32,7 @@ GglError ggl_http_ecr_get_authorization_token(
     GglByteVec host_vec = GGL_BYTE_VEC(host_buf);
     ggl_byte_vec_chain_append(&err, &host_vec, GGL_STR("ecr."));
     ggl_byte_vec_chain_append(&err, &host_vec, sigv4_details.aws_region);
-    ggl_byte_vec_chain_append(&err, &host_vec, GGL_STR(".api.aws/\0"));
+    ggl_byte_vec_chain_append(&err, &host_vec, GGL_STR(".api.aws\0"));
     if (err != GGL_ERR_OK) {
         return GGL_ERR_NOMEM;
     }

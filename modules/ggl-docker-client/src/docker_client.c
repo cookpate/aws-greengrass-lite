@@ -4,9 +4,8 @@
  */
 
 #include "ggl/docker_client.h"
-#include "ggl/cleanup.h"
-#include "ggl/file.h"
 #include "ggl/json_decode.h"
+#include <ggl/api_ecr.h>
 #include <ggl/arena.h>
 #include <ggl/base64.h>
 #include <ggl/buffer.h>
@@ -156,13 +155,11 @@ GglError ggl_docker_credentials_ecr_retrieve(
     GglBuffer ecr_registry, SigV4Details sigv4_details
 ) {
     GGL_LOGD("Pulling credentials for ECR");
-    char template[] = "/tmp/ecr_credentials_XXXXXX";
-    int fd = mkstemp(template);
-    if (fd < 0) {
-        return GGL_ERR_FAILURE;
-    }
-    GGL_CLEANUP_ID(cleanup_fd, cleanup_close, fd);
-    unlink(template);
+    // https://github.com/aws/containers-roadmap/issues/1589
+    // Not sure how to size this buffer as the size of a token appears to be
+    // unbounded.
+    static uint8_t response_buf[8000];
+    GglBuffer response = GGL_BUF(response_buf);
 
     uint16_t http_response = 400;
     GglError err = GGL_ERR_OK;
@@ -190,33 +187,10 @@ GglError ggl_docker_credentials_ecr_retrieve(
             return err;
         }
 
-        err = sigv4_download(
-            (const char *) url_buf,
-            host.buf,
-            GGL_STR("/"),
-            fd,
-            sigv4_details,
-            &http_response
+        err = ggl_http_ecr_get_authorization_token(
+            sigv4_details, &http_response, &response
         );
     }
-
-    // https://github.com/aws/containers-roadmap/issues/1589
-    // Not sure how to size this buffer as the size of a token appears to be
-    // unbounded.
-    static uint8_t secret_buf[8000];
-    off_t bytes_written = lseek(fd, 0, SEEK_CUR);
-    if (((uintmax_t) bytes_written > SIZE_MAX)
-        || ((size_t) bytes_written > sizeof(secret_buf))) {
-        return GGL_ERR_NOMEM;
-    }
-    lseek(fd, 0, SEEK_SET);
-    GglBuffer response = GGL_BUF(secret_buf);
-    GglError read_err = ggl_file_read(fd, &response);
-    if (read_err != GGL_ERR_OK) {
-        return GGL_ERR_FAILURE;
-    }
-    (void) ggl_close(fd);
-    cleanup_fd = -1;
 
     if ((err != GGL_ERR_OK) || (http_response != 200U)) {
         GGL_LOGE(
