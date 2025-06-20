@@ -1,3 +1,20 @@
+# Pre-release Notes v2.2.0
+
+This release includes support for pulling images from public container
+registries, including Public ECR and Docker.
+
+## New with this release
+
+- Added support for container image artifact URIs. Prepend `docker:` to valid
+  image names to declare them as artifacts (i.e.
+  `docker:registry/image[:tag|@digest]`). Missing images are pulled when
+  deploying a component with Docker artifacts.
+
+Docker must be installed and configured in order to pull registry images and run
+containers on a Greengrass Lite Core Device. For instructions, view
+documentation here:
+https://docs.aws.amazon.com/greengrass/v2/developerguide/run-docker-container.html
+
 # Release Notes v2.1.0
 
 This release includes HTTP proxy support for the AWS Greengrass Nucleus Lite
