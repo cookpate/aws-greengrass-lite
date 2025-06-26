@@ -452,6 +452,32 @@ GglError select_linux_lifecycle(
     return GGL_ERR_OK;
 }
 
+GglError ggl_get_recipe_artifacts_for_platform(
+    GglMap recipe_map, GglList *out_platform_artifacts
+) {
+    GglMap linux_manifest = { 0 };
+    GglError ret = select_linux_manifest(recipe_map, &linux_manifest);
+    if (ret != GGL_ERR_OK) {
+        return ret;
+    }
+    GglObject *artifact_list = NULL;
+    if (!ggl_map_get(linux_manifest, GGL_STR("Artifacts"), &artifact_list)) {
+        GGL_LOGE("Missing required 'Artifacts' key in Manifest");
+        return GGL_ERR_PARSE;
+    }
+    if (ggl_obj_type(*artifact_list) != GGL_TYPE_LIST) {
+        GGL_LOGE("Artifacts was not a list");
+        return GGL_ERR_PARSE;
+    }
+    GglList artifacts = ggl_obj_into_list(*artifact_list);
+    if (ggl_list_type_check(artifacts, GGL_TYPE_MAP)) {
+        GGL_LOGE("Artifacts was not a list of maps.");
+        return GGL_ERR_PARSE;
+    }
+    *out_platform_artifacts = artifacts;
+    return GGL_ERR_OK;
+}
+
 GglError select_linux_manifest(
     GglMap recipe_map, GglMap *out_selected_linux_manifest
 ) {
