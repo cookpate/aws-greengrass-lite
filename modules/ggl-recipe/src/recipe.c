@@ -44,6 +44,11 @@ static GglError parse_requiresprivilege_section(
 ) {
     GglObject *value_obj;
     if (ggl_map_get(lifecycle_step, GGL_STR("RequiresPrivilege"), &value_obj)) {
+        if (ggl_obj_type(*value_obj) == GGL_TYPE_BOOLEAN) {
+            *is_root = ggl_obj_into_bool(*value_obj);
+            return GGL_ERR_OK;
+        }
+
         if (ggl_obj_type(*value_obj) != GGL_TYPE_BUF) {
             GGL_LOGE("RequiresPrivilege needs to be a (true/false) value");
             return GGL_ERR_INVALID;
