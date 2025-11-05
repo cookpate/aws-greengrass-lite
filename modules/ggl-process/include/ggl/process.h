@@ -8,14 +8,30 @@
 //! Process management functionality
 
 #include <ggl/error.h>
+#include <sys/types.h>
 #include <stdbool.h>
 #include <stdint.h>
+
+/// This callback is registered to be called betweek fork() and exec()
+/// The callback is allowed to modify argv and environ and perform syscalls
+/// which are safe post-fork().
+typedef GglError (*GglProcessSpawnCallback)(
+    int handle, char ***argv, char ***environ, void *ctx
+);
 
 /// Spawn a child process with given arguments
 /// Exactly one of wait or kill must eventually be called to clean up resources
 /// and reap zombie.
 /// argv must be null-terminated.
-GglError ggl_process_spawn(const char *const argv[], int *handle);
+/// GglProcessSpawnCallback if set is invoked between fork() and execvp(), at
+/// which point any pre-exec actions may be taken.
+GglError ggl_process_spawn(
+    const char *const argv[],
+    int *handle,
+    GglProcessSpawnCallback callback,
+    void *ctx,
+    uint32_t exec_timeout
+);
 
 /// Wait until child process exits
 /// Cleans up handle and child zombie.
