@@ -8,8 +8,10 @@ ggl_init_module(
        ggl-common
        aws-iot-call
        core-bus
-       ggl-exec
        ggl-binpath
+       ggl-process
+       ggl-proxy-environment
+       ggl-socket-server
        core-bus-gg-config
        core-bus-aws-iot-mqtt
        PkgConfig::openssl

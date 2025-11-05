@@ -7,6 +7,7 @@
 
 //! Event driven server listening on a unix socket
 
+#include <ggl/attr.h>
 #include <ggl/buffer.h>
 #include <ggl/error.h>
 #include <ggl/socket_handle.h>
@@ -26,6 +27,10 @@ GglError ggl_socket_server_listen(
     GglError (*client_ready)(void *ctx, uint32_t handle),
     void *ctx
 );
+
+/// Open a server on `path`.
+NONNULL(3) ACCESS(write_only, 3)
+GglError ggl_socket_open(GglBuffer path, mode_t mode, int *socket_fd);
 
 extern void (*ggl_socket_server_ext_handler)(void);
 extern int ggl_socket_server_ext_fd;

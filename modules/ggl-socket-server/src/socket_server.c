@@ -303,6 +303,23 @@ static int inherit_socket_from_env(GglBuffer socket_name) {
     return -1;
 }
 
+GglError ggl_socket_open(GglBuffer path, mode_t mode, int *socket_fd) {
+    assert(socket_fd != NULL);
+    int server_fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if (server_fd == -1) {
+        GGL_LOGE("Failed to create socket: %d.", errno);
+        return GGL_ERR_FAILURE;
+    }
+
+    GglError ret = configure_server_socket(server_fd, path, mode);
+    if (ret != GGL_ERR_OK) {
+        cleanup_close(&server_fd);
+        return ret;
+    }
+    *socket_fd = server_fd;
+    return ret;
+}
+
 GglError ggl_socket_server_listen(
     const GglBuffer *socket_name,
     GglBuffer path,
@@ -335,15 +352,8 @@ GglError ggl_socket_server_listen(
     // If socket activation is not attempted or fails, create one
     if (server_fd == -1) {
         GGL_LOGD("Falling back to creating socket.");
-        server_fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
-        if (server_fd == -1) {
-            GGL_LOGE("Failed to create socket: %d.", errno);
-            return GGL_ERR_FAILURE;
-        }
-
-        ret = configure_server_socket(server_fd, path, mode);
+        ret = ggl_socket_open(path, mode, &server_fd);
         if (ret != GGL_ERR_OK) {
-            cleanup_close(&server_fd);
             return ret;
         }
         GGL_LOGT("Listening on %.*s", (int) path.len, path.data);

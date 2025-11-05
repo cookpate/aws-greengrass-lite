@@ -4,7 +4,6 @@
 
 #include "config_operations.h"
 #include "fleet-provisioning.h"
-#include "ggl/exec.h"
 #include <ggl/arena.h>
 #include <ggl/buffer.h>
 #include <ggl/core_bus/gg_config.h>
@@ -12,6 +11,7 @@
 #include <ggl/json_decode.h>
 #include <ggl/log.h>
 #include <ggl/object.h>
+#include <ggl/process.h>
 #include <ggl/vector.h>
 #include <limits.h>
 #include <stdbool.h>
@@ -319,7 +319,7 @@ GglError ggl_update_system_cert_paths(
 
     const char *cp_args[]
         = { "cp", args->root_ca_path, (char *) path_vec.buf.data, NULL };
-    ret = ggl_exec_command(cp_args);
+    ret = ggl_process_call(cp_args);
     if (ret != GGL_ERR_OK) {
         GGL_LOGE("Failed to copy root CA file");
         return ret;

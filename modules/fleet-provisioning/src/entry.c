@@ -5,24 +5,29 @@
 #include "cloud_request.h"
 #include "config_operations.h"
 #include "fleet-provisioning.h"
-#include "ggl/cleanup.h"
-#include "ggl/exec.h"
 #include "pki_ops.h"
-#include "stdbool.h"
+#include <assert.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <ggl/arena.h>
 #include <ggl/buffer.h>
+#include <ggl/cleanup.h>
 #include <ggl/error.h>
 #include <ggl/file.h>
 #include <ggl/log.h>
 #include <ggl/object.h>
+#include <ggl/process.h>
+#include <ggl/proxy/environment.h>
+#include <ggl/socket_server.h>
 #include <ggl/utils.h>
 #include <ggl/vector.h>
 #include <limits.h>
 #include <sys/types.h>
 #include <unistd.h>
 #include <uuid/uuid.h>
+#include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 
 #define MAX_TEMPLATE_LEN 128
@@ -41,7 +46,7 @@ static GglError cleanup_actions(
     // Create destination directory
     const char *mkdir_dest_args[]
         = { "mkdir", "-p", (char *) output_dir_path.data, NULL };
-    GglError ret = ggl_exec_command(mkdir_dest_args);
+    GglError ret = ggl_process_call(mkdir_dest_args);
     if (ret != GGL_ERR_OK) {
         GGL_LOGE("Failed to create destination directory");
         return ret;
@@ -74,7 +79,7 @@ static GglError cleanup_actions(
     }
 
     const char *sh_args[] = { "sh", "-c", (char *) cmd.buf.data, NULL };
-    ret = ggl_exec_command(sh_args);
+    ret = ggl_process_call(sh_args);
     if (ret != GGL_ERR_OK) {
         GGL_LOGE("Failed to copy certificates to destination directory");
         return ret;
@@ -94,7 +99,7 @@ static GglError cleanup_actions(
     const char *chown_args[]
         = { "chown", "-R", USER_GROUP, (char *) output_dir_path.data, NULL };
 
-    ret = ggl_exec_command(chown_args);
+    ret = ggl_process_call(chown_args);
     if (ret != GGL_ERR_OK) {
         GGL_LOGE("Failed to change ownership of certificates");
         return ret;
@@ -106,7 +111,49 @@ static GglError cleanup_actions(
     return GGL_ERR_OK;
 }
 
-static GglError start_iotcored(FleetProvArgs *args, pid_t *iotcored_pid) {
+static GglError setup_iotcored_for_socket_activation(
+    int pid, char ***argv, char ***envp, void *ctx
+) {
+    assert(ctx != NULL);
+    assert(envp != NULL);
+    (void) argv;
+
+    int *socket_fd = ctx;
+
+    // search envp for LISTEN_PID
+    GglBuffer pid_str = { 0 };
+    char **envs = *envp;
+    while (envs != NULL) {
+        GglBuffer found = ggl_buffer_from_null_term(*envs);
+        if (ggl_buffer_remove_prefix(&found, GGL_STR("LISTEN_PID="))) {
+            pid_str = found;
+            break;
+        }
+        ++envs;
+    }
+
+    if ((pid_str.data == NULL) || (pid_str.len <= 0U)) {
+        GGL_LOGE("Failed to find child env");
+        return GGL_ERR_FAILURE;
+    }
+    int format_ret
+        = snprintf((char *) pid_str.data, pid_str.len - 1U, "%d", pid);
+    if (format_ret < 0) {
+        GGL_LOGE("Failed to modify child env");
+        return GGL_ERR_FAILURE;
+    }
+    pid_str.data[format_ret] = '\0';
+
+    // reopen socket_fd where iotcored expects it
+    dup2(*socket_fd, 3);
+    (void) ggl_close(*socket_fd);
+
+    return GGL_ERR_OK;
+}
+
+static GglError start_iotcored(
+    FleetProvArgs *args, int *iotcored_pid, int socket_fd
+) {
     static uint8_t uuid_mem[37];
     uuid_t binuuid;
     uuid_generate_random(binuuid);
@@ -119,15 +166,50 @@ static GglError start_iotcored(FleetProvArgs *args, pid_t *iotcored_pid) {
             args->root_ca_path,  "-c", args->claim_cert,  "-k",
             args->claim_key,     NULL };
 
-    GglError ret = ggl_exec_command_async(iotcore_d_args, iotcored_pid);
+    GglError ret = ggl_process_spawn(
+        iotcore_d_args,
+        iotcored_pid,
+        setup_iotcored_for_socket_activation,
+        &socket_fd,
+        10U
+    );
+
+    if (ret != GGL_ERR_OK) {
+        GGL_LOGE("Failed to start iotcored.");
+        return ret;
+    }
 
     GGL_LOGD("PID for new iotcored: %d", *iotcored_pid);
-
-    return ret;
+    return GGL_ERR_OK;
 }
 
-static void cleanup_kill_process(const pid_t *pid) {
-    (void) ggl_exec_kill_process(*pid);
+static void cleanup_kill_process(const int *pid) {
+    if (*pid >= 0) {
+        (void) ggl_process_kill(*pid, 30U);
+    }
+}
+
+static GglError set_iotcored_environment(void) {
+    // No other threads call setenv
+    // NOLINTBEGIN(concurrency-mt-unsafe)
+    GglError proxy_ret = ggl_proxy_set_environment();
+    if (proxy_ret != GGL_ERR_OK) {
+        GGL_LOGW("Failed to set proxy environment variables.");
+    }
+    int setenv_ret = setenv("LISTEN_FDNAMES", "aws_iot_mqtt", true);
+    if (setenv_ret == -1) {
+        return GGL_ERR_FAILURE;
+    }
+    setenv_ret = setenv("LISTEN_FDS", "1", true);
+    if (setenv_ret == -1) {
+        return GGL_ERR_FAILURE;
+    }
+    setenv_ret = setenv("LISTEN_PID", "..........", true);
+    if (setenv_ret == -1) {
+        return GGL_ERR_FAILURE;
+    }
+    // NOLINTEND(concurrency-mt-unsafe)
+    return GGL_ERR_OK;
 }
 
 GglError run_fleet_prov(FleetProvArgs *args) {
@@ -182,11 +264,29 @@ GglError run_fleet_prov(FleetProvArgs *args) {
     }
     GGL_CLEANUP(cleanup_close, output_dir);
 
-    pid_t iotcored_pid = -1;
-    ret = start_iotcored(args, &iotcored_pid);
+    ret = set_iotcored_environment();
+    if (ret != GGL_ERR_OK) {
+        GGL_LOGE("Failed to set socket environment variables (%d).", errno);
+        return ret;
+    }
+
+    int socket_fd = -1;
+    ret = ggl_socket_open(
+        GGL_STR("/run/greengrass/iotcoredfleet"), 0660, &socket_fd
+    );
+    GGL_CLEANUP_ID(cleanup_socket_fd, cleanup_close, socket_fd);
+    if (ret != GGL_ERR_OK) {
+        GGL_LOGE("Error opening core bus socket.");
+        return ret;
+    }
+
+    int iotcored_pid = -1;
+    ret = start_iotcored(args, &iotcored_pid, socket_fd);
     if (ret != GGL_ERR_OK) {
         return ret;
     }
+    (void) ggl_close(socket_fd);
+    cleanup_socket_fd = -1;
     GGL_CLEANUP(cleanup_kill_process, iotcored_pid);
 
     int priv_key;
