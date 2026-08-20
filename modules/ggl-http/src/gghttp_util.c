@@ -50,12 +50,21 @@ static GgError translate_curl_code(CURLcode code) {
     switch (code) {
     case CURLE_OK:
         return GG_ERR_OK;
+    case CURLE_COULDNT_CONNECT:
+    case CURLE_NO_CONNECTION_AVAILABLE:
+    case CURLE_RECV_ERROR:
+    case CURLE_SEND_ERROR:
+        return GG_ERR_NOCONN;
+    case CURLE_OPERATION_TIMEDOUT:
+        return GG_ERR_TIMEOUT;
     case CURLE_AGAIN:
         return GG_ERR_RETRY;
     case CURLE_URL_MALFORMAT:
         return GG_ERR_PARSE;
     case CURLE_ABORTED_BY_CALLBACK:
     case CURLE_WRITE_ERROR:
+    case CURLE_UNSUPPORTED_PROTOCOL:
+    case CURLE_FAILED_INIT:
         return GG_ERR_FAILURE;
     default:
         return GG_ERR_REMOTE;
