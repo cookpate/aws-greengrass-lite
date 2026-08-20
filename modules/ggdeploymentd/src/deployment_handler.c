@@ -15,6 +15,7 @@
 #include "iotcored_instance.h"
 #include "priv_io.h"
 #include "stale_component.h"
+#include "tes_getter.h"
 #include <assert.h>
 #include <dirent.h>
 #include <errno.h>
@@ -85,13 +86,6 @@ static atomic_bool deployment_in_progress;
 bool ggl_deployment_in_progress(void) {
     return atomic_load(&deployment_in_progress);
 }
-
-typedef struct TesCredentials {
-    GgBuffer aws_region;
-    GgBuffer access_key_id;
-    GgBuffer secret_access_key;
-    GgBuffer session_token;
-} TesCredentials;
 
 // vector to track successfully deployed components to be saved for bootstrap
 // component name -> map of lifecycle state and version
@@ -366,59 +360,6 @@ static GgError get_rootca_path(GgByteVec *rootca_path) {
     gg_byte_vec_chain_append(&ret, rootca_path, gg_obj_into_buf(resp));
     gg_byte_vec_chain_push(&ret, rootca_path, '\0');
     return ret;
-}
-
-static GgError get_tes_credentials(TesCredentials *tes_creds) {
-    GgObject *aws_access_key_id = NULL;
-    GgObject *aws_secret_access_key = NULL;
-    GgObject *aws_session_token = NULL;
-
-    static uint8_t credentials_alloc[1500];
-    static GgBuffer tesd = GG_STR("aws_iot_tes");
-    GgObject result;
-    GgMap params = { 0 };
-    GgArena credential_alloc = gg_arena_init(GG_BUF(credentials_alloc));
-
-    GgError ret = ggl_call(
-        tesd,
-        GG_STR("request_credentials"),
-        params,
-        NULL,
-        &credential_alloc,
-        &result
-    );
-    if (ret != GG_ERR_OK) {
-        GG_LOGE("Failed to get TES credentials.");
-        return GG_ERR_FAILURE;
-    }
-
-    ret = gg_map_validate(
-        gg_obj_into_map(result),
-        GG_MAP_SCHEMA(
-            { GG_STR("accessKeyId"),
-              GG_REQUIRED,
-              GG_TYPE_BUF,
-              &aws_access_key_id },
-            { GG_STR("secretAccessKey"),
-              GG_REQUIRED,
-              GG_TYPE_BUF,
-              &aws_secret_access_key },
-            { GG_STR("sessionToken"),
-              GG_REQUIRED,
-              GG_TYPE_BUF,
-              &aws_session_token },
-        )
-    );
-    if (ret != GG_ERR_OK) {
-        GG_LOGE("Failed to validate TES credentials."
-
-        );
-        return GG_ERR_FAILURE;
-    }
-    tes_creds->access_key_id = gg_obj_into_buf(*aws_access_key_id);
-    tes_creds->secret_access_key = gg_obj_into_buf(*aws_secret_access_key);
-    tes_creds->session_token = gg_obj_into_buf(*aws_session_token);
-    return GG_ERR_OK;
 }
 
 typedef struct {
@@ -3179,7 +3120,23 @@ static void handle_deployment(
             .gghttplib_root_ca_path = config.rootca_path };
 
     TesCredentials tes_credentials = { .aws_region = region.buf };
-    ret = get_tes_credentials(&tes_credentials);
+
+    // Local deployments are not required to use TES; however,
+    // some local deployments may attempt to use them.
+    // Do not retry TES for local deployments.
+    // Instead, allow the device operator to programatically retry using
+    // ggl-cli.
+    if (deployment->type == LOCAL_DEPLOYMENT) {
+        ret = get_tes_credentials(&tes_credentials);
+    } else {
+        ret = get_tes_credentials_with_retry(
+            &tes_credentials,
+            get_tes_credentials,
+            TES_CREDENTIAL_RETRY_BASE_MS,
+            TES_CREDENTIAL_RETRY_MAX_MS
+        );
+    }
+
     bool tes_creds_retrieved = (ret == GG_ERR_OK);
     if (!tes_creds_retrieved) {
         GG_LOGW(
